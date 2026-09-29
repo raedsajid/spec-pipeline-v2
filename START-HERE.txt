@@ -1,0 +1,45 @@
+BuildERP — Vercel-ready source package, 2026-09-29
+
+This package is the Vercel migration of the supplied BuildERP snapshot. The
+frontend/domain behavior is preserved, while the Cloudflare Worker bindings have
+been replaced with services that can be reached from Vercel Functions.
+
+RUNTIME
+- Next.js 16 / React 19 on Vercel (Node.js runtime)
+- Turso/libSQL for the SQLite-compatible application database
+- Cloudflare R2 through its S3-compatible API for PDFs/cache objects
+- Gemini REST API, configured from the BuildERP owner Settings screen
+
+START HERE
+1. Read VERCEL-DEPLOYMENT.md.
+2. Copy .env.example to .env.local for local development and fill the values.
+3. Run: npm install
+4. Run: npm run typecheck
+5. Run: npm run dev
+6. For production, import the repository into Vercel and add the same environment
+   variables in Project Settings > Environment Variables.
+
+IMPORTANT
+- PDFs still support the existing 10 MB application limit. Uploads go directly
+  from the browser to a short-lived signed R2 URL so they do not cross Vercel's
+  Function request-body limit.
+- PDF viewing uses a short-lived signed R2 download URL, while ownership is still
+  checked by the BuildERP API first.
+- The database schema is created/upgraded automatically on first use.
+- Keep SETTINGS_SECRET unchanged across deployments or the Gemini API key saved
+  in BuildERP Settings can no longer be decrypted.
+- The first BuildERP account becomes admin/owner, exactly as in the supplied app.
+
+CURRENT PRODUCT BEHAVIOR
+- Submittal editing opens a right sidebar; the UI no longer offers approval.
+- Selected draft rows can be exported. Legacy approval API behavior remains.
+- Attaching products updates the existing submittal without changing its title.
+- Individual product submittals retain the parent title followed by the product.
+- Submittals are grouped by specification, with source-derived section metadata.
+- Source review uses a continuous PDF viewer.
+- Structural article/clause/group metadata is derived from source evidence.
+- Product classification distinguishes non-product entities and prohibited or
+  conditional usage; excluded candidates carry reasons for source review.
+
+The ZIP contains source code only. It does not contain production accounts,
+secrets, uploaded PDFs, database content, node_modules, or build output.
