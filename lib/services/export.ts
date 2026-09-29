@@ -1,6 +1,7 @@
 import { correctSections } from "@/lib/domain/specifications";
 import { zipSync, strToU8 } from "fflate";
 import { AppError, ParsedDocument, Requirement } from "@/lib/domain/models";
+import { SUBMITTAL_LOG_VERSION } from "@/lib/domain/submittals";
 import { bucket, getJSON, id, signedObjectDownloadUrl } from "@/lib/server/store";
 import { projectDetail, parsedKey } from "./documents";
 const xml = (s: unknown) =>
@@ -75,7 +76,7 @@ export async function exportProject(
   if (approved && !selectedIds.length) {
     const unfinished = data.documents.some(
       (d) =>
-        (d.log_version !== 2 && d.status !== "ready") ||
+        (d.log_version !== SUBMITTAL_LOG_VERSION && d.status !== "ready") ||
         (!data.requirements.some((r) => r.docId === d.id) && !d.empty_review),
     );
     const unreviewed = data.requirements.some(

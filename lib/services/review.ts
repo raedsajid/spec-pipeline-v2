@@ -12,6 +12,7 @@ import {
 } from "@/lib/domain/models";
 import { one, run, getJSON, now, event, ownedDoc } from "@/lib/server/store";
 import { parsedKey } from "./documents";
+import { SUBMITTAL_LOG_VERSION } from "@/lib/domain/submittals";
 export async function reviewRequirement(rid: string, u: User, b: any) {
   const row = await one(
     "SELECT r.*,pd.hash,pd.project_id FROM requirements r JOIN project_docs pd ON pd.id=r.doc_id JOIN projects p ON p.id=pd.project_id WHERE r.id=? AND p.user_id=?",
@@ -91,7 +92,7 @@ export async function reviewRequirement(rid: string, u: User, b: any) {
 }
 export async function confirmEmpty(docId: string, u: User, note: string) {
   const d = await ownedDoc(docId, u.id);
-  if (d.log_version !== 2 && d.status !== "ready")
+  if (d.log_version !== SUBMITTAL_LOG_VERSION && d.status !== "ready")
     throw new AppError(
       409,
       "Finish extraction before confirming an empty result.",

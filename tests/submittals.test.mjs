@@ -4,6 +4,9 @@ import {
   extractionEvidence,
   productDraft,
   sameRequirement,
+  SUBMITTAL_CACHE_PREFIX,
+  SUBMITTAL_EXTRACTION_VERSION,
+  SUBMITTAL_LOG_VERSION,
 } from "../lib/domain/submittals.ts";
 const ev = (id, text, page = 1) => ({
   id,
@@ -245,8 +248,85 @@ test("classification rejects suppliers and bans without confusing ingredient exc
  const p=(name,quote)=>({name,quote});
  assert.equal(assessProduct(p("SEMCO Incorporated","SEMCO Incorporated"),[]).selectable,false);
  assert.equal(assessProduct(p("Strap hangers","Strap hangers shall not be used in this application."),[]).selectable,false);
- assert.equal(assessProduct(p("Duct liner","Duct liner shall not contain asbestos."),[]).selectable,true);
+ assert.equal(assessProduct({...p("Duct liner","Duct liner shall not contain asbestos."),entityType:"product",usageStatus:"required",catalogRole:"standalone_item"},[]).selectable,true);
  assert.equal(assessProduct(p("Strap hangers","Strap hangers shall not be used unless approved."),[]).usageStatus,"conditional");
  assert.equal(assessProduct({...p("Acme","Acme"),entityType:"manufacturer"},[]).selectable,false);
  assert.equal(assessProduct({...p("Pipe","Provide pipe when specified."),usageStatus:"unclear"},[]).selectable,false);
+});
+
+test("product classification separates standalone items from constituent materials and generic references",()=>{
+ const standalone=(name,quote,entityType="product")=>({name,quote,entityType,usageStatus:"required",catalogRole:"standalone_item"});
+
+ const tankQuote="Boiler blowdown tank: Construct of carbon steel.";
+ assert.equal(
+   assessProduct(standalone("Boiler blowdown tank",tankQuote),[ev("tank",tankQuote)]).selectable,
+   true,
+ );
+ const carbon=assessProduct(standalone("carbon steel",tankQuote,"material"),[ev("tank",tankQuote)]);
+ assert.equal(carbon.selectable,false);
+ assert.equal(carbon.catalogRole,"constituent_material");
+
+ const stainlessQuote="Tank shall include a stainless steel striking or wearing plate.";
+ const stainless=assessProduct(standalone("stainless steel",stainlessQuote,"material"),[ev("wear",stainlessQuote)]);
+ assert.equal(stainless.selectable,false);
+ assert.equal(stainless.catalogRole,"constituent_material");
+
+ const valveQuote="Provide temperature regulating valve in water inlet.";
+ assert.equal(
+   assessProduct(standalone("temperature regulating valve",valveQuote),[ev("valve",valveQuote)]).selectable,
+   true,
+ );
+
+ const testQuote="Hydrostatically test assembled boiler accessories.";
+ const assembled=assessProduct(standalone("assembled boiler accessories",testQuote),[ev("test",testQuote)]);
+ assert.equal(assembled.selectable,false);
+ assert.equal(assembled.catalogRole,"generic_reference");
+
+ const insulationQuote="Provide fiberglass insulation for piping.";
+ assert.equal(
+   assessProduct(standalone("fiberglass insulation",insulationQuote,"material"),[ev("insulation",insulationQuote)]).selectable,
+   true,
+ );
+
+ const scopeQuote="Accessories associated with the boilers are included in this Section.";
+ assert.equal(
+   assessProduct(standalone("accessories associated with the boilers",scopeQuote),[ev("scope",scopeQuote)]).selectable,
+   false,
+ );
+});
+
+test("legacy candidates are not silently assumed to be product plus permitted",()=>{
+ const result=assessProduct({name:"Valve assembly",quote:"Valve assembly."},[ev("legacy","Valve assembly.")]);
+ assert.equal(result.entityType,"unclear");
+ assert.equal(result.usageStatus,"unclear");
+ assert.equal(result.catalogRole,"unclear");
+ assert.equal(result.selectable,false);
+
+ const reclassified=assessProduct({name:"fiberglass insulation",quote:"Provide fiberglass insulation."},[ev("legacy2","Provide fiberglass insulation.")]);
+ assert.equal(reclassified.catalogRole,"standalone_item");
+ assert.equal(reclassified.usageStatus,"required");
+ assert.equal(reclassified.selectable,true);
+});
+
+test("validated extraction keeps non-catalog candidates inspectable but non-selectable",()=>{
+ const quote="Boiler blowdown tank: Construct of carbon steel.";
+ const result=parseExtraction({requirements:[],products:[{
+   name:"carbon steel",
+   description:"Tank construction material",
+   entityType:"material",
+   usageStatus:"required",
+   catalogRole:"standalone_item",
+   condition:"",
+   evidenceIds:["steel"],
+   quote,
+ }]},[ev("steel",quote)]);
+ assert.equal(result.products.length,1);
+ assert.equal(result.products[0].selectable,false);
+ assert.equal(result.products[0].catalogRole,"constituent_material");
+});
+
+test("product extraction cache and imported log versions are bumped",()=>{
+ assert.equal(SUBMITTAL_EXTRACTION_VERSION,3);
+ assert.equal(SUBMITTAL_LOG_VERSION,3);
+ assert.equal(SUBMITTAL_CACHE_PREFIX,"cache/submittals-v3");
 });

@@ -33,7 +33,12 @@ import {
 } from "@/components/ui/table";
 import { toast } from "sonner";
 import { Requirement } from "@/lib/domain/models";
-import { Product, sortSubmittals, groupSubmittals } from "@/lib/domain/submittals";
+import {
+  Product,
+  SUBMITTAL_LOG_VERSION,
+  sortSubmittals,
+  groupSubmittals,
+} from "@/lib/domain/submittals";
 import { api, pretty, specLabel } from "@/lib/api-client";
 import ProductPanel from "./product-panel";
 import SpecsView from "./specs-view";
@@ -187,7 +192,7 @@ export default function Workbench({
     running.current = true;
     setError("");
     try {
-      const pending = docs.filter((d) => d.log_version !== 2);
+      const pending = docs.filter((d) => d.log_version !== SUBMITTAL_LOG_VERSION);
       for (let i = 0; i < pending.length && !dead.current; i++) {
         let done = false;
         setWork({
@@ -271,7 +276,8 @@ export default function Workbench({
     rows.some((r) => r.id === id),
   ).length;
   const ready = docs.length && docs.every((d) => d.indexed),
-    generated = docs.length && docs.every((d) => d.log_version === 2),
+    generated =
+      docs.length && docs.every((d) => d.log_version === SUBMITTAL_LOG_VERSION),
     progress = work?.progress ?? (generated ? 100 : ready ? 50 : 0);
   function compare(r: Requirement) {
     setInitial({ docId: r.docId!, row: r });
@@ -398,7 +404,8 @@ export default function Workbench({
                     {d.indexed ? "Ready" : "Preparing"}
                   </span>
                 </div>
-                {d.log_version === 2 && !rows.some((r) => r.docId === d.id) && (
+                {d.log_version === SUBMITTAL_LOG_VERSION &&
+                  !rows.some((r) => r.docId === d.id) && (
                   <div className="warning-box">
                     {d.empty_review ? (
                       "Source reviewed: " + d.empty_review

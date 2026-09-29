@@ -2,6 +2,11 @@ import { assessProduct } from "./product-classification";
 import { z } from "zod";
 import { AppError, RequirementSchema, normalize } from "./models";
 import type { Evidence, Requirement } from "./models";
+
+export const SUBMITTAL_EXTRACTION_VERSION = 3;
+export const SUBMITTAL_LOG_VERSION = 3;
+export const SUBMITTAL_CACHE_PREFIX = `cache/submittals-v${SUBMITTAL_EXTRACTION_VERSION}`;
+
 export const ProductSchema = z.object({
   name: z.string().min(1).max(200),
   description: z
@@ -12,6 +17,7 @@ export const ProductSchema = z.object({
   group: z.string().max(240).nullish().transform(v => v || "Unresolved"),
   entityType: z.enum(["product","material","manufacturer","model","standard","performance_property","unclear"]).optional(),
   usageStatus: z.enum(["required","permitted","conditional","prohibited","unclear"]).optional(),
+  catalogRole: z.enum(["standalone_item","constituent_material","attribute","integral_component","generic_reference","unclear"]).optional(),
   condition: z.string().max(6000).nullish().transform(v => v || ""),
   clause: z
     .string()
@@ -96,7 +102,7 @@ export function parseExtraction(value: unknown, evidence: Evidence[]) {
       continue;
     }
     const blocks = p.evidenceIds.map(id => evidence.find(e=>e.id===id)!);
-    const classified = assessProduct({...parsed.data,entityType:parsed.data.entityType || "unclear",usageStatus:parsed.data.usageStatus || "unclear"}, blocks);
+    const classified = assessProduct(parsed.data, blocks);
     products.push({...parsed.data, ...classified});
   }
   return {

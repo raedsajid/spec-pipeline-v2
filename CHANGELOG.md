@@ -1,5 +1,14 @@
 # Changes
 
+## 2026-09-29 — standalone product semantics and v3 extraction cache
+
+- Product catalog candidates must now be independently identifiable/procurable/submittable items, not merely material nouns or components mentioned inside another product's construction.
+- Added `catalogRole` classification for standalone items, constituent materials, attributes, integral components, generic references and unclear candidates.
+- Removed permissive legacy defaults: missing entity/usage classification is conservative unless strong source evidence reclassifies the candidate.
+- Added relational source checks for construction materials, material modifiers, integral components, generic/collective scope phrases and action-only references without using a material-name blacklist.
+- Bumped product/submittal extraction cache and imported log version to v3 so prior v2 product candidates are not silently reused. Existing reviewed rows are preserved; unreviewed extraction is regenerated/imported.
+- Added regression coverage for boiler blowdown tanks, constituent carbon/stainless steel, temperature regulating valves, generic assembled accessories, standalone fiberglass insulation and legacy unknown candidates.
+
 ## 2026-09-25 — Product assignment and register navigation
 
 - Clicking a register title opens Specs source view instead of the review popup.
