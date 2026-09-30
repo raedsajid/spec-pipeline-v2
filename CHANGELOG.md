@@ -1,5 +1,13 @@
 # Changes
 
+## 2026-09-30 — product recall and scope consolidation (v4)
+
+- Fixed silent omission of products whose names wrap across PDF lines (e.g. "Y-" / "type strainer"): quote verification now ignores line-break whitespace and hyphenation, and short-quote recovery may use up to three consecutive cited lines. Requirement quote checks use the same comparison.
+- Prompt now requires every item in compound "Provide A; B; and C" lists and extraction of Part 2 equipment headings such as "Boiler Blowdown Separators or Tanks:".
+- Part 1 scope phrases are folded into the matching Part 2 product (shared item noun plus a shared qualifier) and shown as "Also referenced as". When only the scope phrase was extracted, the Part 2 equipment heading becomes the product with a canonical name (e.g. "Boiler Blowdown Separator / Tank"). Unmatched scope products are kept.
+- Folded candidates remain resolvable for existing links; linked rows get a "merged into" warning.
+- Bumped extraction cache and imported log version to v4; regenerate the submittal log to pick up the fix. Reviewed rows are preserved.
+
 ## 2026-09-29 — standalone product semantics and v3 extraction cache
 
 - Product catalog candidates must now be independently identifiable/procurable/submittable items, not merely material nouns or components mentioned inside another product's construction.

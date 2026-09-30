@@ -436,12 +436,15 @@ export async function projectDetail(pid: string, uid: string) {
   );
 
   const excludedIds = new Set<string>();
+  const mergedInto = new Map<string, string>();
   const sourceEvidence = new Map<string, Map<string, import("@/lib/domain/models").Evidence>>();
   const sourceSections = new Map<string, Map<string, string>>();
   const sourcePositions = new Map<string, Map<string, number>>();
   for (const d of documents) {
     const candidates = await catalog(d.id, uid);
-    for (const p of candidates.excludedProducts) excludedIds.add(p.id);
+    for (const p of candidates.excludedProducts)
+      if (p.mergedInto) mergedInto.set(p.id, p.mergedInto);
+      else excludedIds.add(p.id);
     const cached = await getJSON<ParsedDocument>(parsedKey(d.hash));
     const parsed = cached ? correctSections(cached) : undefined;
     sourceEvidence.set(d.id, new Map(parsed?.evidence.map(e => [e.id,e]) || []));
@@ -470,7 +473,11 @@ export async function projectDetail(pid: string, uid: string) {
       id: r.id,
       docId: r.doc_id,
       filename: r.filename,
-      warnings: [...JSON.parse(r.data).warnings, ...(JSON.parse(r.data).productIds?.some((id:string)=>excludedIds.has(id)) ? ["Previously linked product is now excluded by classification. Inspect its source and remove it if not applicable."] : [])],
+      warnings: [
+        ...JSON.parse(r.data).warnings,
+        ...(JSON.parse(r.data).productIds?.some((id:string)=>excludedIds.has(id)) ? ["Previously linked product is now excluded by classification. Inspect its source and remove it if not applicable."] : []),
+        ...((JSON.parse(r.data).productIds || []) as string[]).filter((id) => mergedInto.has(id)).map((id) => `Previously linked scope product was merged into ${mergedInto.get(id)}. Reselect the merged product.`),
+      ],
       clause: JSON.parse(r.data).evidenceIds.map((id:string) => sourceEvidence.get(r.doc_id)?.get(id)?.clause).find(Boolean) || "",
       section: JSON.parse(r.data).evidenceIds.map((id:string) => sourceSections.get(r.doc_id)?.get(id)).find(Boolean) || "Unresolved",
       status: r.status,

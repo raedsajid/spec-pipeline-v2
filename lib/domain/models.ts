@@ -81,6 +81,15 @@ export class AppError extends Error {
 export function normalize(s: string) {
   return s.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
 }
+// Evidence is stored per PDF line, so a quote may span a wrap such as
+// "Y-" / "type strainer". Compare without whitespace or hyphenation.
+export function sourceKey(s: string) {
+  return normalize(s).replace(/[\s\u00ad\u2010\u2011\u2012\u2013-]+/g, "");
+}
+export function sourceIncludes(source: string, quote: string) {
+  const q = sourceKey(quote);
+  return !!q && sourceKey(source).includes(q);
+}
 export function validateRequirement(
   r: RequirementInput,
   evidence: Evidence[],
@@ -91,17 +100,14 @@ export function validateRequirement(
   if (!r.evidenceIds.length || r.evidenceIds.some((id) => !known.has(id)))
     blocking.push("Select valid source evidence for this requirement.");
   const source = r.evidenceIds.map((id) => known.get(id)?.text || "").join(" ");
-  if (
-    !normalize(source).includes(normalize(r.quote)) ||
-    normalize(r.quote).length < 8
-  )
+  if (!sourceIncludes(source, r.quote) || normalize(r.quote).length < 8)
     blocking.push("The evidence quote must match the selected source text.");
   if (r.evidenceIds.some((id) => known.get(id)?.source === "ocr"))
     warnings.push("OCR text: compare this requirement with the original page.");
-  if (r.condition && !normalize(source).includes(normalize(r.condition)))
+  if (r.condition && !sourceIncludes(source, r.condition))
     warnings.push("Confirm the condition against the original wording.");
   for (const product of r.products) {
-    if (!normalize(source).includes(normalize(product)))
+    if (!sourceIncludes(source, product))
       warnings.push("Product selection needs source verification: " + product);
   }
   return { warnings, blocking };

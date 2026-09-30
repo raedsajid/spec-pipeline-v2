@@ -196,7 +196,7 @@ export default function EditSubmittalPanel({
                         />
                         <span>
                           {p.name}
-                          <small>{p.description}</small>{p.usageStatus === "conditional" && <small>Conditional: {p.condition || p.quote}</small>}{p.selectable === false && <small role="alert">Previously linked · {p.classificationReason} Remove this selection if it is not applicable.</small>}
+                          <small>{p.description}</small>{!!p.aliases?.length && <small>Also referenced as {p.aliases.map((a) => a.name).join("; ")}</small>}{p.usageStatus === "conditional" && <small>Conditional: {p.condition || p.quote}</small>}{p.selectable === false && <small role="alert">Previously linked · {p.classificationReason} Remove this selection if it is not applicable.</small>}
                         </span>
                       </label>
                     ))}

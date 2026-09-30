@@ -1,10 +1,10 @@
 import { assessProduct } from "./product-classification";
 import { z } from "zod";
-import { AppError, RequirementSchema, normalize } from "./models";
+import { AppError, RequirementSchema, normalize, sourceIncludes } from "./models";
 import type { Evidence, Requirement } from "./models";
 
-export const SUBMITTAL_EXTRACTION_VERSION = 3;
-export const SUBMITTAL_LOG_VERSION = 3;
+export const SUBMITTAL_EXTRACTION_VERSION = 4;
+export const SUBMITTAL_LOG_VERSION = 4;
 export const SUBMITTAL_CACHE_PREFIX = `cache/submittals-v${SUBMITTAL_EXTRACTION_VERSION}`;
 
 export const ProductSchema = z.object({
@@ -34,6 +34,14 @@ export type Product = z.infer<typeof ProductSchema> & {
   docId?: string;
   selectable?: boolean;
   classificationReason?: string;
+  aliases?: ProductAlias[];
+  mergedInto?: string;
+};
+export type ProductAlias = {
+  id: string;
+  name: string;
+  page: number;
+  clause: string;
 };
 // Validate optional catalog entries independently from mandatory submittal rows.
 // A short quote can be expanded only from its own verified source block.
@@ -76,27 +84,28 @@ export function parseExtraction(value: unknown, evidence: Evidence[]) {
       continue;
     }
     if (normalize(p.quote).length < 8) {
-      const block = source.find(
-        (e) =>
-          normalize(e!.text).length >= 8 &&
-          e!.text.length <= 6000 &&
-          normalize(e!.text).includes(normalize(p.name)) &&
-          (!normalize(p.quote) ||
-            normalize(e!.text).includes(normalize(p.quote))),
+      const blocks = quoteWindows(source as Evidence[], evidence).find(
+        (w) => {
+          const text = w.map((e) => e.text).join(" ");
+          return (
+            normalize(text).length >= 8 &&
+            text.length <= 6000 &&
+            sourceIncludes(text, p.name) &&
+            (!normalize(p.quote) || sourceIncludes(text, p.quote))
+          );
+        },
       );
-      if (!block) {
+      if (!blocks) {
         omittedProducts++;
         continue;
       }
-      p.quote = block.text;
-      p.evidenceIds = [block.id];
+      p.quote = blocks.map((e) => e.text).join(" ");
+      p.evidenceIds = blocks.map((e) => e.id);
     }
     const parsed = ProductSchema.safeParse(p);
     if (
       !parsed.success ||
-      !normalize(source.map((e) => e!.text).join(" ")).includes(
-        normalize(p.quote),
-      )
+      !sourceIncludes(source.map((e) => e!.text).join(" "), p.quote)
     ) {
       omittedProducts++;
       continue;
@@ -110,6 +119,27 @@ export function parseExtraction(value: unknown, evidence: Evidence[]) {
     products,
     omittedProducts,
   };
+}
+// Runs of up to three cited blocks that are adjacent in reading order,
+// shortest first, so a name wrapped across lines can still be recovered.
+function quoteWindows(cited: Evidence[], evidence: Evidence[]) {
+  const position = new Map(evidence.map((e, i) => [e.id, i]));
+  const ordered = [...new Set(cited)].sort(
+    (a, b) => position.get(a.id)! - position.get(b.id)!,
+  );
+  const windows: Evidence[][] = [];
+  for (let size = 1; size <= 3; size++)
+    for (let i = 0; i + size <= ordered.length; i++) {
+      const run = ordered.slice(i, i + size);
+      if (
+        run.every(
+          (e, j) =>
+            !j || position.get(e.id)! === position.get(run[j - 1].id)! + 1,
+        )
+      )
+        windows.push(run);
+    }
+  return windows;
 }
 // A checklist is excluded by its heading, not simply by being on the last pages.
 // A new numbered specification section ends the exclusion.

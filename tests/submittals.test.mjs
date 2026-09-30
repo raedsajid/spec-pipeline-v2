@@ -326,7 +326,107 @@ test("validated extraction keeps non-catalog candidates inspectable but non-sele
 });
 
 test("product extraction cache and imported log versions are bumped",()=>{
- assert.equal(SUBMITTAL_EXTRACTION_VERSION,3);
- assert.equal(SUBMITTAL_LOG_VERSION,3);
- assert.equal(SUBMITTAL_CACHE_PREFIX,"cache/submittals-v3");
+ assert.equal(SUBMITTAL_EXTRACTION_VERSION,4);
+ assert.equal(SUBMITTAL_LOG_VERSION,4);
+ assert.equal(SUBMITTAL_CACHE_PREFIX,"cache/submittals-v4");
+});
+
+import { sourceIncludes, validateRequirement } from "../lib/domain/models.ts";
+import { canonicalName, consolidateCatalog, familyScore } from "../lib/domain/product-catalog.ts";
+
+// Line breaks reproduce D021779-15570 BOILER ACCESSORIES.
+const boilerLines = [
+ "PART 1 - GENERAL",
+ "1.01 DESCRIPTION OF WORK",
+ "A. Provide accessories associated with the boilers as needed",
+ "B. Boiler accessories specified in this Section include",
+ "steam/water safety relief valves and steam boiler blowdown",
+ "separators.",
+ "PART 2 - PRODUCTS",
+ "2.01 MATERIALS AND MANUFACTURERS",
+ "A. Safety and Relief Valves:",
+ "1. Steam Safety Valves (not used)",
+ "2. Water Relief Valves:",
+ "a. Pressure Relief Valves: Construct of bronze",
+ "body, metallic disc, metal seat, with",
+ "B. Boiler Blowdown Separators or Tanks:",
+ "1. Provide in accordance with the following:",
+ "a. Tank: Construct of carbon steel, with",
+ "tangential inlet pipe and stainless steel",
+ "c. Specialties: Provide temperature regulating",
+ "valve in water inlet with temperature sensing",
+ "bulb in lower thermometer well; bi-metallic",
+ "thermometer in upper thermometer well; and Y-",
+ "type strainer in cold water inlet line",
+ "upstream of temperature regulating valve.",
+ "Provide backflow prevention device in water",
+ "inlet.",
+];
+const boiler = () => assignStructure({pages:1,evidence:boilerLines.map((t,i)=>ev("b"+i,t))}).evidence;
+const line = (text) => "b"+boilerLines.indexOf(text);
+
+test("quotes spanning a hyphenated line wrap verify against per-line evidence",()=>{
+ assert.equal(sourceIncludes("thermometer well; and Y- type strainer in cold water","Y-type strainer in cold water"),true);
+ assert.equal(sourceIncludes("thermometer well; and Y- type strainer","globe valve"),false);
+ const evidence = boiler();
+ const ids = [line("thermometer in upper thermometer well; and Y-"),line("type strainer in cold water inlet line"),line("upstream of temperature regulating valve.")];
+ const strainer = {name:"Y-type strainer",description:"in cold water inlet line upstream of temperature regulating valve",entityType:"product",usageStatus:"required",catalogRole:"standalone_item",condition:"",evidenceIds:ids,quote:"Y-type strainer in cold water inlet line upstream of temperature regulating valve."};
+ const full = parseExtraction({requirements:[],products:[strainer]},evidence);
+ assert.equal(full.omittedProducts,0);
+ assert.equal(full.products[0].selectable,true);
+ const recovered = parseExtraction({requirements:[],products:[{...strainer,quote:"",evidenceIds:ids.slice(0,2)}]},evidence);
+ assert.equal(recovered.omittedProducts,0);
+ assert.deepEqual(recovered.products[0].evidenceIds,ids.slice(0,2));
+ assert.equal(validateRequirement({title:"Strainer",text:"Strainer",type:"product_data",condition:"",evidenceIds:ids.slice(0,2),quote:"and Y-type strainer in cold water inlet line",products:["Y-type strainer"]},evidence).blocking.length,0);
+});
+
+test("scope families match specific items only when they name the same kind of item",()=>{
+ assert.ok(familyScore("steam/water safety relief valves","Water Relief Valves"));
+ assert.ok(familyScore("steam boiler blowdown separators","Boiler Blowdown Separators or Tanks"));
+ assert.equal(familyScore("steam/water safety relief valves","temperature regulating valve"),0);
+ assert.equal(familyScore("steam boiler blowdown separators","backflow prevention device"),0);
+ assert.equal(canonicalName("Boiler Blowdown Separators or Tanks:"),"Boiler Blowdown Separator / Tank");
+});
+
+test("Part 1 scope products fold into Part 2 products and equipment headings",()=>{
+ const evidence = boiler();
+ const byId = new Map(evidence.map(e=>[e.id,e]));
+ const product = (name,texts) => {
+  const ids = texts.map(line);
+  const first = byId.get(ids[0]);
+  return {id:"p:"+name,name,description:"",group:first.article,clause:first.clause,page:1,section:first.section,evidenceIds:ids,quote:texts.join(" "),entityType:"product",usageStatus:"required",catalogRole:"standalone_item",selectable:true};
+ };
+ const scope = ["B. Boiler accessories specified in this Section include","steam/water safety relief valves and steam boiler blowdown","separators."];
+ const specialties = ["c. Specialties: Provide temperature regulating","valve in water inlet with temperature sensing"];
+ const products = [
+  product("steam/water safety relief valves",scope),
+  product("steam boiler blowdown separators",scope),
+  product("Water Relief Valves",["2. Water Relief Valves:"]),
+  product("Tank",["a. Tank: Construct of carbon steel, with"]),
+  product("temperature regulating valve",specialties),
+  product("Y-type strainer",["thermometer in upper thermometer well; and Y-","type strainer in cold water inlet line"]),
+  product("backflow prevention device",["Provide backflow prevention device in water"]),
+ ];
+ const result = consolidateCatalog(products,[],evidence,(h)=>"heading:"+h.id);
+ assert.deepEqual(result.products.map(p=>p.name),["Water Relief Valves","Boiler Blowdown Separator / Tank","temperature regulating valve","Y-type strainer","backflow prevention device"]);
+ const tank = result.products[1];
+ assert.equal(tank.id,"heading:"+line("B. Boiler Blowdown Separators or Tanks:"));
+ assert.equal(tank.clause,"2.01.B");
+ assert.equal(tank.group,"2.01 MATERIALS AND MANUFACTURERS");
+ assert.deepEqual(tank.aliases.map(a=>a.name),["steam boiler blowdown separators","Tank"]);
+ assert.deepEqual(result.products[0].aliases.map(a=>a.name),["steam/water safety relief valves"]);
+ assert.deepEqual(result.excludedProducts.map(p=>[p.name,p.mergedInto,p.selectable]),[
+  ["steam/water safety relief valves","Water Relief Valves",false],
+  ["steam boiler blowdown separators","Boiler Blowdown Separator / Tank",false],
+  ["Tank","Boiler Blowdown Separator / Tank",false],
+ ]);
+});
+
+test("scope products without a matching Part 2 item stay in the catalog",()=>{
+ const evidence = boiler();
+ const scopeLine = line("steam/water safety relief valves and steam boiler blowdown");
+ const lonely = {id:"x",name:"expansion tank",description:"",group:"1.01",clause:"1.01.B",page:1,section:"",evidenceIds:[scopeLine],quote:"x",selectable:true};
+ const result = consolidateCatalog([lonely],[],evidence,(h)=>h.id);
+ assert.deepEqual(result.products.map(p=>p.name),["expansion tank"]);
+ assert.equal(result.excludedProducts.length,0);
 });

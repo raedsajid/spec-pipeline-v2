@@ -218,6 +218,14 @@ export default function SpecsView({
                             {p.name}
                           </h3>
                           <p>{p.description}</p>
+                          {!!p.aliases?.length && (
+                            <small>
+                              Also referenced as{" "}
+                              {p.aliases
+                                .map((a) => `${a.name} (${a.clause})`)
+                                .join("; ")}
+                            </small>
+                          )}
                           <small>
                             Page {p.page} · {p.clause}
                           </small>

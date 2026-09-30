@@ -1,4 +1,5 @@
 import { assessProduct } from "@/lib/domain/product-classification";
+import { consolidateCatalog } from "@/lib/domain/product-catalog";
 import { correctSections } from "@/lib/domain/specifications";
 import { z } from "zod";
 import {
@@ -8,6 +9,7 @@ import {
   User,
   buildBatches,
   normalize,
+  sourceIncludes,
   validateRequirement,
 } from "@/lib/domain/models";
 import {
@@ -61,6 +63,8 @@ Reject from the standalone product catalog: constituent/construction materials o
 
 Conversely, a standalone material explicitly specified as its own item, such as "Provide fiberglass insulation", can be catalogRole=standalone_item and entityType=material. A specifically named valve, separator/tank, thermometer, strainer, backflow device, etc. can be standalone when the source specifies it as its own item.
 
+COMPLETENESS: When one sentence provides several items, such as "Provide A in X; B in Y; and C in Z", return EVERY listed item as its own candidate, including the final item after "and". An equipment heading in a product article, such as "B. Boiler Blowdown Separators or Tanks:", names a standalone item even when its subparagraphs only describe construction: return it using the heading wording and cite the heading line. Prefer the specific product-article terminology over broad Description of Work phrasing, but still return scope items; the server links them. Source lines may wrap mid-word ("Y-" then "type strainer"); treat the wrapped text as one word.
+
 Extract independently identifiable items from substantive product articles even when they are not named in the submittal clause. Do not supply group or clause: the server derives structure from evidence. Classify each candidate by entityType, usageStatus, and catalogRole using its full source context. Manufacturers are attributes, models are attributes of physical products, standards are references, and performance values are properties. Explicitly prohibited items must be marked prohibited. Distinguish a banned product from an ingredient exclusion such as shall not contain asbestos. Preserve exceptions and conditional restrictions verbatim; use unclear when scope cannot be resolved. Never infer permission or standalone status from a mere mention. Product names must be grounded in the cited text; do not invent products or infer applicability to a submittal. Product quotes must describe the candidate itself and contain at least 8 characters. For short product names, quote the surrounding source sentence; never pad or invent text. All quotes must be exact source text from supplied IDs in reading order. Empty arrays are valid. Return every finding in the batch.`;
 export async function catalog(docId: string, uid: string) {
   const d = await ownedDoc(docId, uid);
@@ -90,7 +94,15 @@ export async function catalog(docId: string, uid: string) {
           (assessment.selectable ? products : excludedProducts).push(resolved);
         }
   }
-  return { products, excludedProducts, complete: job?.status === "ready" };
+  return {
+    ...consolidateCatalog(
+      products,
+      excludedProducts,
+      evidence,
+      (heading) => `${d.hash}:heading:${heading.id}`,
+    ),
+    complete: job?.status === "ready",
+  };
 }
 async function importLog(docId: string, hash: string) {
   const pd = await one("SELECT * FROM project_docs WHERE id=?", docId);
@@ -233,9 +245,7 @@ export async function generateLogStep(docId: string, u: User) {
           const ev = p.evidenceIds.map((id) => batch.find((e) => e.id === id));
           if (
             ev.some((e) => !e) ||
-            !normalize(ev.map((e) => e!.text).join(" ")).includes(
-              normalize(p.quote),
-            )
+            !sourceIncludes(ev.map((e) => e!.text).join(" "), p.quote)
           )
             continue;
           const assessment=assessProduct(p,ev as import("@/lib/domain/models").Evidence[]);
