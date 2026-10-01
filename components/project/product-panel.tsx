@@ -125,12 +125,7 @@ export default function ProductPanel({
           .filter((p) => p.length)
           .map((p) => productDraft(row, p, "individual"))
     : [];
-  const catalogView = useMemo(() => {
-    if (!prioritize || !suggestedIds.size) return products;
-    const keep = new Set([...suggestedIds, ...selected]);
-    return products.filter((p) => keep.has(p.id));
-  }, [prioritize, products, suggestedIds, selected]);
-  const filtered = catalogView.filter((p) =>
+  const filtered = products.filter((p) =>
     (p.name + " " + p.group).toLowerCase().includes(search.toLowerCase()),
   );
   const rankedGroups = prioritizeProductGroups(
@@ -229,12 +224,6 @@ export default function ProductPanel({
                   No sourced products found. Generate the submittal log first;
                   some specifications contain no product catalog.
                 </p>
-              ) : !filtered.length ? (
-                <p className="empty-caption">
-                  {prioritize
-                    ? "No suggested products for this submittal. Turn off Prioritize suggestions to browse the full catalog."
-                    : "No products match this search."}
-                </p>
               ) : (
                 rankedGroups.map(({ group, items, matches }) => {
                   const ids = items.map((p) => p.id),
@@ -300,6 +289,18 @@ export default function ProductPanel({
                                 />
                               )}
                             </span>
+                            <small>{p.description}</small>
+                            {!!p.aliases?.length && (
+                              <small>
+                                Also referenced as{" "}
+                                {p.aliases.map((a) => a.name).join("; ")}
+                              </small>
+                            )}
+                            {p.usageStatus === "conditional" && (
+                              <small>
+                                Conditional: {p.condition || p.quote}
+                              </small>
+                            )}
                             {p.selectable === false && (
                               <small role="alert">
                                 Previously linked · {p.classificationReason}{" "}

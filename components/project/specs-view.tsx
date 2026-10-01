@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Search, FileText, Box, Ban, Undo2 } from "lucide-react";
+import { Search, FileText, Box, CircleMinus, RotateCcw } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -99,7 +99,11 @@ function ProductCatalogList({
                       onMove(p.id);
                     }}
                   >
-                    {excludeAction ? <Ban size={15} /> : <Undo2 size={15} />}
+                    {excludeAction ? (
+                      <CircleMinus size={15} />
+                    ) : (
+                      <RotateCcw size={15} />
+                    )}
                   </button>
                 </h3>
                 <small>

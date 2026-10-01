@@ -2503,16 +2503,18 @@ button[class*="button"],
   padding: 0;
 }
 .product-move-icon.exclude {
-  color: #c62828;
+  color: #e8a05c;
 }
 .product-move-icon.exclude:hover:not(:disabled) {
-  background: #fdecea;
+  color: #d94d15;
+  background: #fff0e6;
 }
 .product-move-icon.include {
-  color: #2e7d32;
+  color: #e8a05c;
 }
 .product-move-icon.include:hover:not(:disabled) {
-  background: #e8f5e9;
+  color: #d94d15;
+  background: #fff0e6;
 }
 .product-move-icon:disabled {
   opacity: 0.5;

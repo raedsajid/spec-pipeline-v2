@@ -116,15 +116,8 @@ export default function EditSubmittalPanel({
           ]
         : (edit.productIds || []).filter((id) => !ids.includes(id)),
     );
-  const catalogView =
-    prioritize && suggestedIds.size
-      ? products.filter(
-          (p) =>
-            suggestedIds.has(p.id) || edit.productIds?.includes(p.id),
-        )
-      : products;
   const rankedGroups = prioritizeProductGroups(
-    catalogView,
+    products,
     suggestedIds,
     prioritize,
   );
@@ -252,8 +245,7 @@ export default function EditSubmittalPanel({
                     </button>
                   )}
                 </div>
-                {rankedGroups.length ? (
-                  rankedGroups.map(({ group, items, matches }) => {
+                {rankedGroups.map(({ group, items, matches }) => {
                   const ids = items.map((p) => p.id),
                     count = ids.filter((id) =>
                       edit.productIds?.includes(id),
@@ -308,6 +300,18 @@ export default function EditSubmittalPanel({
                                 />
                               )}
                             </span>
+                            <small>{p.description}</small>
+                            {!!p.aliases?.length && (
+                              <small>
+                                Also referenced as{" "}
+                                {p.aliases.map((a) => a.name).join("; ")}
+                              </small>
+                            )}
+                            {p.usageStatus === "conditional" && (
+                              <small>
+                                Conditional: {p.condition || p.quote}
+                              </small>
+                            )}
                             {p.selectable === false && (
                               <small role="alert">
                                 Previously linked · {p.classificationReason}{" "}
@@ -319,14 +323,7 @@ export default function EditSubmittalPanel({
                       ))}
                     </details>
                   );
-                })
-                ) : (
-                  <p className="muted">
-                    {prioritize
-                      ? "No suggested products for this submittal. Turn off Prioritize suggestions to browse the full catalog."
-                      : "No products match."}
-                  </p>
-                )}
+                })}
               </>
             ) : (
               <p className="muted">
