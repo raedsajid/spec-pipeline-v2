@@ -2476,6 +2476,48 @@ button[class*="button"],
 .product-catalog-tabs {
   margin-bottom: 4px;
 }
+.product-finding.compact {
+  padding: 12px 14px;
+}
+.product-finding-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.product-finding-name {
+  flex: 1;
+  min-width: 0;
+}
+.product-move-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.product-move-icon.exclude {
+  color: #c62828;
+}
+.product-move-icon.exclude:hover:not(:disabled) {
+  background: #fdecea;
+}
+.product-move-icon.include {
+  color: #2e7d32;
+}
+.product-move-icon.include:hover:not(:disabled) {
+  background: #e8f5e9;
+}
+.product-move-icon:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
 .product-exclude-reason {
   display: block;
   color: #9a5b2a;

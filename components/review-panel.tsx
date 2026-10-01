@@ -83,16 +83,25 @@ export default function EditSubmittalPanel({
   useEffect(() => {
     if (!edit || loading || !products.length || seededFor.current === edit.id)
       return;
-    const ids = suggestions.map((s) => s.id);
     seededFor.current = edit.id;
-    if (!(edit.productIds && edit.productIds.length) && ids.length)
+    if (edit.productIds?.length) return;
+    if (prioritize && suggestions.length)
       setEdit((prev) =>
-        prev ? { ...prev, productIds: ids } : prev,
+        prev ? { ...prev, productIds: suggestions.map((s) => s.id) } : prev,
       );
-  }, [edit?.id, edit?.productIds, loading, products.length, suggestions]);
+  }, [edit?.id, edit?.productIds, loading, products.length, suggestions, prioritize]);
   if (!row || !edit) return null;
   const set = (key: string, value: unknown) =>
     setEdit({ ...edit, [key]: value });
+  function setPrioritizeAndSelection(on: boolean) {
+    setPrioritize(on);
+    if (on) set("productIds", suggestions.map((s) => s.id));
+    else
+      set(
+        "productIds",
+        (edit!.productIds || []).filter((id) => !suggestedIds.has(id)),
+      );
+  }
   const toggle = (ids: string[], checked: boolean) =>
     set(
       "productIds",
@@ -107,8 +116,15 @@ export default function EditSubmittalPanel({
           ]
         : (edit.productIds || []).filter((id) => !ids.includes(id)),
     );
+  const catalogView =
+    prioritize && suggestedIds.size
+      ? products.filter(
+          (p) =>
+            suggestedIds.has(p.id) || edit.productIds?.includes(p.id),
+        )
+      : products;
   const rankedGroups = prioritizeProductGroups(
-    products,
+    catalogView,
     suggestedIds,
     prioritize,
   );
@@ -213,7 +229,7 @@ export default function EditSubmittalPanel({
                     <span>Prioritize suggestions</span>
                     <Switch
                       checked={prioritize}
-                      onCheckedChange={setPrioritize}
+                      onCheckedChange={setPrioritizeAndSelection}
                       aria-label="Prioritize suggestions"
                     />
                     {prioritize && suggestions.length > 0 && (
@@ -227,15 +243,17 @@ export default function EditSubmittalPanel({
                     <button
                       type="button"
                       className="text-link suggestion-reset"
-                      onClick={() =>
-                        set("productIds", suggestions.map((s) => s.id))
-                      }
+                      onClick={() => {
+                        setPrioritize(true);
+                        set("productIds", suggestions.map((s) => s.id));
+                      }}
                     >
                       Reset to suggestions
                     </button>
                   )}
                 </div>
-                {rankedGroups.map(({ group, items, matches }) => {
+                {rankedGroups.length ? (
+                  rankedGroups.map(({ group, items, matches }) => {
                   const ids = items.map((p) => p.id),
                     count = ids.filter((id) =>
                       edit.productIds?.includes(id),
@@ -290,18 +308,6 @@ export default function EditSubmittalPanel({
                                 />
                               )}
                             </span>
-                            <small>{p.description}</small>
-                            {!!p.aliases?.length && (
-                              <small>
-                                Also referenced as{" "}
-                                {p.aliases.map((a) => a.name).join("; ")}
-                              </small>
-                            )}
-                            {p.usageStatus === "conditional" && (
-                              <small>
-                                Conditional: {p.condition || p.quote}
-                              </small>
-                            )}
                             {p.selectable === false && (
                               <small role="alert">
                                 Previously linked · {p.classificationReason}{" "}
@@ -313,7 +319,14 @@ export default function EditSubmittalPanel({
                       ))}
                     </details>
                   );
-                })}
+                })
+                ) : (
+                  <p className="muted">
+                    {prioritize
+                      ? "No suggested products for this submittal. Turn off Prioritize suggestions to browse the full catalog."
+                      : "No products match."}
+                  </p>
+                )}
               </>
             ) : (
               <p className="muted">

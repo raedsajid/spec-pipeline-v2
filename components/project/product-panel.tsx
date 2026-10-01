@@ -98,9 +98,16 @@ export default function ProductPanel({
     if (!row || loading || !products.length || seededFor.current === row.id)
       return;
     seededFor.current = row.id;
-    if (!(row.productIds && row.productIds.length) && suggestions.length)
+    if (row.productIds?.length) setSelected(row.productIds);
+    else if (prioritize && suggestions.length)
       setSelected(suggestions.map((s) => s.id));
-  }, [row, loading, products, suggestions]);
+  }, [row, loading, products, suggestions, prioritize]);
+  function setPrioritizeAndSelection(on: boolean) {
+    setPrioritize(on);
+    if (on) setSelected(suggestions.map((s) => s.id));
+    else
+      setSelected((prev) => prev.filter((id) => !suggestedIds.has(id)));
+  }
   const chosen = products.filter((p) => selected.includes(p.id));
   const hasExcluded = chosen.some((p) => p.selectable === false);
   const drafts = row
@@ -118,7 +125,12 @@ export default function ProductPanel({
           .filter((p) => p.length)
           .map((p) => productDraft(row, p, "individual"))
     : [];
-  const filtered = products.filter((p) =>
+  const catalogView = useMemo(() => {
+    if (!prioritize || !suggestedIds.size) return products;
+    const keep = new Set([...suggestedIds, ...selected]);
+    return products.filter((p) => keep.has(p.id));
+  }, [prioritize, products, suggestedIds, selected]);
+  const filtered = catalogView.filter((p) =>
     (p.name + " " + p.group).toLowerCase().includes(search.toLowerCase()),
   );
   const rankedGroups = prioritizeProductGroups(
@@ -175,7 +187,7 @@ export default function ProductPanel({
                     <span>Prioritize suggestions</span>
                     <Switch
                       checked={prioritize}
-                      onCheckedChange={setPrioritize}
+                      onCheckedChange={setPrioritizeAndSelection}
                       aria-label="Prioritize suggestions"
                     />
                     {prioritize && suggestions.length > 0 && (
@@ -189,9 +201,10 @@ export default function ProductPanel({
                     <button
                       type="button"
                       className="text-link suggestion-reset"
-                      onClick={() =>
-                        setSelected(suggestions.map((s) => s.id))
-                      }
+                      onClick={() => {
+                        setPrioritize(true);
+                        setSelected(suggestions.map((s) => s.id));
+                      }}
                     >
                       Reset to suggestions
                     </button>
@@ -215,6 +228,12 @@ export default function ProductPanel({
                 <p className="empty-caption">
                   No sourced products found. Generate the submittal log first;
                   some specifications contain no product catalog.
+                </p>
+              ) : !filtered.length ? (
+                <p className="empty-caption">
+                  {prioritize
+                    ? "No suggested products for this submittal. Turn off Prioritize suggestions to browse the full catalog."
+                    : "No products match this search."}
                 </p>
               ) : (
                 rankedGroups.map(({ group, items, matches }) => {
@@ -281,18 +300,6 @@ export default function ProductPanel({
                                 />
                               )}
                             </span>
-                            <small>{p.description}</small>
-                            {!!p.aliases?.length && (
-                              <small>
-                                Also referenced as{" "}
-                                {p.aliases.map((a) => a.name).join("; ")}
-                              </small>
-                            )}
-                            {p.usageStatus === "conditional" && (
-                              <small>
-                                Conditional: {p.condition || p.quote}
-                              </small>
-                            )}
                             {p.selectable === false && (
                               <small role="alert">
                                 Previously linked · {p.classificationReason}{" "}

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Search, FileText, Box, ArrowLeftRight } from "lucide-react";
+import { Search, FileText, Box, Ban, Undo2 } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -24,6 +24,7 @@ function ProductCatalogList({
   onMove,
   movingId,
   empty,
+  excludeAction,
 }: {
   items: Product[];
   search: string;
@@ -33,11 +34,10 @@ function ProductCatalogList({
   onMove: (productId: string) => void;
   movingId: string | null;
   empty: string;
+  excludeAction: boolean;
 }) {
   const filtered = items.filter((p) =>
-    (p.name + " " + p.group + " " + (p.description || ""))
-      .toLowerCase()
-      .includes(search.toLowerCase()),
+    (p.name + " " + p.group).toLowerCase().includes(search.toLowerCase()),
   );
   const groups = [...new Set(filtered.map((p) => p.group))];
   return (
@@ -75,46 +75,36 @@ function ProductCatalogList({
                 onMouseEnter={() => onFocus(p)}
                 onFocus={() => onFocus(p)}
                 className={
-                  "finding-card product-finding " +
+                  "finding-card product-finding compact " +
                   (p.evidenceIds.some((id) => highlight.includes(id))
                     ? "active"
                     : "")
                 }
                 key={p.id}
               >
-                <h3>
+                <h3 className="product-finding-title">
                   <Box size={16} />
-                  {p.name}
+                  <span className="product-finding-name">{p.name}</span>
+                  <button
+                    type="button"
+                    className={
+                      "product-move-icon " +
+                      (excludeAction ? "exclude" : "include")
+                    }
+                    title={actionLabel}
+                    aria-label={actionLabel}
+                    disabled={movingId === p.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMove(p.id);
+                    }}
+                  >
+                    {excludeAction ? <Ban size={15} /> : <Undo2 size={15} />}
+                  </button>
                 </h3>
-                <p>{p.description}</p>
-                {!!p.aliases?.length && (
-                  <small>
-                    Also referenced as{" "}
-                    {p.aliases
-                      .map((a) => `${a.name} (${a.clause})`)
-                      .join("; ")}
-                  </small>
-                )}
-                {p.classificationReason && (
-                  <small className="product-exclude-reason">
-                    {p.classificationReason}
-                  </small>
-                )}
                 <small>
                   Page {p.page} · {p.clause}
                 </small>
-                <button
-                  type="button"
-                  className="button secondary full product-move-btn"
-                  disabled={movingId === p.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onMove(p.id);
-                  }}
-                >
-                  <ArrowLeftRight size={15} />
-                  {movingId === p.id ? "Moving…" : actionLabel}
-                </button>
               </article>
             ))}
           </details>
@@ -337,6 +327,7 @@ export default function SpecsView({
                       highlight={highlight}
                       onFocus={focus}
                       actionLabel="Move to excluded"
+                      excludeAction
                       onMove={(id) => moveProduct(id, "excluded")}
                       movingId={movingId}
                       empty={
@@ -353,6 +344,7 @@ export default function SpecsView({
                       highlight={highlight}
                       onFocus={focus}
                       actionLabel="Move to approved"
+                      excludeAction={false}
                       onMove={(id) => moveProduct(id, "approved")}
                       movingId={movingId}
                       empty={
