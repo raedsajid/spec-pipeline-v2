@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Search, FileText, Box } from "lucide-react";
+import { Search, FileText, Box, ArrowLeftRight } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -13,6 +13,118 @@ import { Evidence, Requirement } from "@/lib/domain/models";
 import { Product } from "@/lib/domain/submittals";
 import { api, pretty, specLabel } from "@/lib/api-client";
 import ContinuousPDFViewer from "../continuous-pdf-viewer";
+import { toast } from "sonner";
+
+function ProductCatalogList({
+  items,
+  search,
+  highlight,
+  onFocus,
+  actionLabel,
+  onMove,
+  movingId,
+  empty,
+}: {
+  items: Product[];
+  search: string;
+  highlight: string[];
+  onFocus: (item: { page: number; evidenceIds: string[] }) => void;
+  actionLabel: string;
+  onMove: (productId: string) => void;
+  movingId: string | null;
+  empty: string;
+}) {
+  const filtered = items.filter((p) =>
+    (p.name + " " + p.group + " " + (p.description || ""))
+      .toLowerCase()
+      .includes(search.toLowerCase()),
+  );
+  const groups = [...new Set(filtered.map((p) => p.group))];
+  return (
+    <>
+      <p className="finding-count">
+        {filtered.length} product{filtered.length === 1 ? "" : "s"}
+      </p>
+      {groups.map((group) => {
+        const groupItems = filtered.filter((p) => p.group === group);
+        return (
+          <details className="product-group" open key={group}>
+            <summary
+              onMouseEnter={() =>
+                onFocus({
+                  page: groupItems[0].page,
+                  evidenceIds: groupItems.flatMap((p) => p.evidenceIds),
+                })
+              }
+              onFocus={() =>
+                onFocus({
+                  page: groupItems[0].page,
+                  evidenceIds: groupItems.flatMap((p) => p.evidenceIds),
+                })
+              }
+            >
+              {group}
+              <small>
+                {groupItems.length} product
+                {groupItems.length === 1 ? "" : "s"}
+              </small>
+            </summary>
+            {groupItems.map((p) => (
+              <article
+                tabIndex={0}
+                onMouseEnter={() => onFocus(p)}
+                onFocus={() => onFocus(p)}
+                className={
+                  "finding-card product-finding " +
+                  (p.evidenceIds.some((id) => highlight.includes(id))
+                    ? "active"
+                    : "")
+                }
+                key={p.id}
+              >
+                <h3>
+                  <Box size={16} />
+                  {p.name}
+                </h3>
+                <p>{p.description}</p>
+                {!!p.aliases?.length && (
+                  <small>
+                    Also referenced as{" "}
+                    {p.aliases
+                      .map((a) => `${a.name} (${a.clause})`)
+                      .join("; ")}
+                  </small>
+                )}
+                {p.classificationReason && (
+                  <small className="product-exclude-reason">
+                    {p.classificationReason}
+                  </small>
+                )}
+                <small>
+                  Page {p.page} · {p.clause}
+                </small>
+                <button
+                  type="button"
+                  className="button secondary full product-move-btn"
+                  disabled={movingId === p.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onMove(p.id);
+                  }}
+                >
+                  <ArrowLeftRight size={15} />
+                  {movingId === p.id ? "Moving…" : actionLabel}
+                </button>
+              </article>
+            ))}
+          </details>
+        );
+      })}
+      {!filtered.length && <p className="empty-caption">{empty}</p>}
+    </>
+  );
+}
+
 export default function SpecsView({
   documents,
   requirements,
@@ -31,19 +143,28 @@ export default function SpecsView({
     [page, setPage] = useState(1),
     [highlight, setHighlight] = useState<string[]>([]),
     [tab, setTab] = useState(initial?.product ? "products" : "submittals"),
+    [productTab, setProductTab] = useState(
+      initial?.product?.selectable === false ? "excluded" : "approved",
+    ),
     [search, setSearch] = useState(""),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [movingId, setMovingId] = useState<string | null>(null);
   const doc = documents.find((d) => d.id === docId);
   useEffect(() => {
     if (initial) {
       setDocId(initial.docId);
       setTab(initial.product ? "products" : "submittals");
+      if (initial.product)
+        setProductTab(
+          initial.product.selectable === false ? "excluded" : "approved",
+        );
     }
   }, [initial]);
   useEffect(() => {
     let live = true;
     setEvidence([]);
     setProducts([]);
+    setExcluded([]);
     setPage(1);
     setHighlight([]);
     setError("");
@@ -78,13 +199,36 @@ export default function SpecsView({
     setPage(item.page);
     setHighlight(item.evidenceIds);
   }
+  async function moveProduct(
+    productId: string,
+    status: "approved" | "excluded",
+  ) {
+    setMovingId(productId);
+    setError("");
+    try {
+      const result = await api(`documents/${docId}/products`, "POST", {
+        productId,
+        status,
+      });
+      setProducts(result.products || []);
+      setExcluded(result.excludedProducts || []);
+      setProductTab(status === "approved" ? "approved" : "excluded");
+      toast.success(
+        status === "approved"
+          ? "Product moved to approved."
+          : "Product moved to excluded.",
+      );
+    } catch (e) {
+      setError((e as Error).message);
+      toast.error((e as Error).message);
+    } finally {
+      setMovingId(null);
+    }
+  }
   const rows = requirements.filter(
     (r) =>
       r.docId === docId &&
       (r.title + " " + r.text).toLowerCase().includes(search.toLowerCase()),
-  );
-  const filtered = products.filter((p) =>
-    (p.name + " " + p.group).toLowerCase().includes(search.toLowerCase()),
   );
   return (
     <div className="specs-workspace">
@@ -177,69 +321,48 @@ export default function SpecsView({
                 )}
               </TabsContent>
               <TabsContent value="products">
-                <p className="finding-count">{filtered.length} products</p>
-                {!!excluded.length && <details className="product-group"><summary>{excluded.length} excluded candidates · view reasons</summary>{excluded.map(p=><div className="product-option" key={p.id}><button className="product-name" >{p.name}<small>{p.classificationReason}</small></button></div>)}</details>}
-                {[...new Set(filtered.map((p) => p.group))].map((group) => {
-                  const items = filtered.filter((p) => p.group === group);
-                  return (
-                    <details className="product-group" open key={group}>
-                      <summary
-                        onMouseEnter={() =>
-                          focus({
-                            page: items[0].page,
-                            evidenceIds: items.flatMap((p) => p.evidenceIds),
-                          })
-                        }
-                        onFocus={() =>
-                          focus({
-                            page: items[0].page,
-                            evidenceIds: items.flatMap((p) => p.evidenceIds),
-                          })
-                        }
-                      >
-                        {group}
-                        <small>{items.length} products</small>
-                      </summary>
-                      {items.map((p) => (
-                        <article
-                          tabIndex={0}
-                          onMouseEnter={() => focus(p)}
-                          onFocus={() => focus(p)}
-                          className={
-                            "finding-card product-finding " +
-                            (p.evidenceIds.some((id) => highlight.includes(id))
-                              ? "active"
-                              : "")
-                          }
-                          key={p.id}
-                        >
-                          <h3>
-                            <Box size={16} />
-                            {p.name}
-                          </h3>
-                          <p>{p.description}</p>
-                          {!!p.aliases?.length && (
-                            <small>
-                              Also referenced as{" "}
-                              {p.aliases
-                                .map((a) => `${a.name} (${a.clause})`)
-                                .join("; ")}
-                            </small>
-                          )}
-                          <small>
-                            Page {p.page} · {p.clause}
-                          </small>
-                        </article>
-                      ))}
-                    </details>
-                  );
-                })}
-                {!products.length && (
-                  <p className="empty-caption">
-                    Products appear after log generation when the specification
-                    contains a product catalog.
-                  </p>
-                )}
+                <Tabs value={productTab} onValueChange={setProductTab}>
+                  <TabsList className="finding-tabs product-catalog-tabs">
+                    <TabsTrigger value="approved">
+                      Approved ({products.length})
+                    </TabsTrigger>
+                    <TabsTrigger value="excluded">
+                      Excluded ({excluded.length})
+                    </TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="approved">
+                    <ProductCatalogList
+                      items={products}
+                      search={search}
+                      highlight={highlight}
+                      onFocus={focus}
+                      actionLabel="Move to excluded"
+                      onMove={(id) => moveProduct(id, "excluded")}
+                      movingId={movingId}
+                      empty={
+                        products.length
+                          ? "No approved products match this search."
+                          : "No approved products yet. Generate the submittal log, or move items here from Excluded."
+                      }
+                    />
+                  </TabsContent>
+                  <TabsContent value="excluded">
+                    <ProductCatalogList
+                      items={excluded}
+                      search={search}
+                      highlight={highlight}
+                      onFocus={focus}
+                      actionLabel="Move to approved"
+                      onMove={(id) => moveProduct(id, "approved")}
+                      movingId={movingId}
+                      empty={
+                        excluded.length
+                          ? "No excluded products match this search."
+                          : "No excluded product candidates for this specification."
+                      }
+                    />
+                  </TabsContent>
+                </Tabs>
               </TabsContent>
             </Tabs>
           </aside>

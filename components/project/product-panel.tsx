@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   ChevronDown,
@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   LoaderCircle,
   Plus,
+  Sparkles,
 } from "lucide-react";
 import {
   Sheet,
@@ -17,8 +18,13 @@ import {
 } from "@/components/ui/sheet";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Switch } from "@/components/ui/switch";
 import { Requirement } from "@/lib/domain/models";
 import { Product, productDraft } from "@/lib/domain/submittals";
+import {
+  prioritizeProductGroups,
+  suggestProductsForRequirement,
+} from "@/lib/domain/product-suggestions";
 import { api, pretty } from "@/lib/api-client";
 import { toast } from "sonner";
 export default function ProductPanel({
@@ -39,14 +45,18 @@ export default function ProductPanel({
     [mode, setMode] = useState("individual"),
     [loading, setLoading] = useState(false),
     [saving, setSaving] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [prioritize, setPrioritize] = useState(true);
+  const seededFor = useRef<string | null>(null);
   useEffect(() => {
     let live = true;
+    seededFor.current = null;
     setSelected(row?.productIds || []);
     setStep(0);
     setSearch("");
     setError("");
     setProducts([]);
+    setPrioritize(true);
     if (row) {
       setLoading(true);
       api(`documents/${row.docId}/products`)
@@ -56,7 +66,13 @@ export default function ProductPanel({
               setError(
                 "Generate the submittal log to prepare the full product catalog.",
               );
-            else setProducts([...d.products, ...(d.excludedProducts || []).filter((p:Product)=>row?.productIds?.includes(p.id))]);
+            else
+              setProducts([
+                ...d.products,
+                ...(d.excludedProducts || []).filter((p: Product) =>
+                  row?.productIds?.includes(p.id),
+                ),
+              ]);
           }
         })
         .catch((e) => {
@@ -70,21 +86,57 @@ export default function ProductPanel({
       live = false;
     };
   }, [row]);
+  const suggestions = useMemo(
+    () => (row && products.length ? suggestProductsForRequirement(row, products) : []),
+    [row, products],
+  );
+  const suggestedIds = useMemo(
+    () => new Set(suggestions.map((s) => s.id)),
+    [suggestions],
+  );
+  useEffect(() => {
+    if (!row || loading || !products.length || seededFor.current === row.id)
+      return;
+    seededFor.current = row.id;
+    if (!(row.productIds && row.productIds.length) && suggestions.length)
+      setSelected(suggestions.map((s) => s.id));
+  }, [row, loading, products, suggestions]);
   const chosen = products.filter((p) => selected.includes(p.id));
-  const hasExcluded = chosen.some(p=>p.selectable===false);
+  const hasExcluded = chosen.some((p) => p.selectable === false);
   const drafts = row
-    ? (mode === "combined" ? [chosen] : chosen.map((p) => [p]))
-        .filter((p) => p.length)
-        .map((p) => productDraft(row, p, mode === "combined" ? "combined" : "individual"))
+    ? mode === "combined"
+      ? [
+          {
+            ...row,
+            productIds: chosen.map((p) => p.id),
+            products: chosen.map((p) => p.name),
+            productMode: "combined" as const,
+          },
+        ]
+      : chosen
+          .map((p) => [p])
+          .filter((p) => p.length)
+          .map((p) => productDraft(row, p, "individual"))
     : [];
   const filtered = products.filter((p) =>
     (p.name + " " + p.group).toLowerCase().includes(search.toLowerCase()),
   );
-  const groups = [...new Set(filtered.map((p) => p.group))];
+  const rankedGroups = prioritizeProductGroups(
+    filtered,
+    suggestedIds,
+    prioritize,
+  );
   const toggle = (ids: string[], checked: boolean) =>
     setSelected((prev) =>
       checked
-        ? [...new Set([...prev, ...ids.filter(id=>products.find(p=>p.id===id)?.selectable!==false)])]
+        ? [
+            ...new Set([
+              ...prev,
+              ...ids.filter(
+                (id) => products.find((p) => p.id === id)?.selectable !== false,
+              ),
+            ]),
+          ]
         : prev.filter((id) => !ids.includes(id)),
     );
   return (
@@ -116,6 +168,36 @@ export default function ProductPanel({
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </div>
+              {!!products.length && !loading && !error && (
+                <div className="suggestion-toolbar">
+                  <label className="suggestion-toggle">
+                    <Sparkles size={16} aria-hidden />
+                    <span>Prioritize suggestions</span>
+                    <Switch
+                      checked={prioritize}
+                      onCheckedChange={setPrioritize}
+                      aria-label="Prioritize suggestions"
+                    />
+                    {prioritize && suggestions.length > 0 && (
+                      <span className="suggestion-match-pill">
+                        {suggestions.length} match
+                        {suggestions.length === 1 ? "" : "es"}
+                      </span>
+                    )}
+                  </label>
+                  {suggestions.length > 0 && (
+                    <button
+                      type="button"
+                      className="text-link suggestion-reset"
+                      onClick={() =>
+                        setSelected(suggestions.map((s) => s.id))
+                      }
+                    >
+                      Reset to suggestions
+                    </button>
+                  )}
+                </div>
+              )}
               <p className="muted small">
                 Products from this specification. Verify their applicability
                 when reviewing the submittal.
@@ -135,9 +217,8 @@ export default function ProductPanel({
                   some specifications contain no product catalog.
                 </p>
               ) : (
-                groups.map((group) => {
-                  const items = filtered.filter((p) => p.group === group),
-                    ids = items.map((p) => p.id),
+                rankedGroups.map(({ group, items, matches }) => {
+                  const ids = items.map((p) => p.id),
                     count = ids.filter((id) => selected.includes(id)).length;
                   return (
                     <details open className="product-group" key={group}>
@@ -156,7 +237,14 @@ export default function ProductPanel({
                           onCheckedChange={(v) => toggle(ids, v === true)}
                         />
                         <b>{group}</b>
-                        <small>{items.length} products</small>
+                        {prioritize && matches > 0 && (
+                          <span className="suggestion-match-pill">
+                            {matches} match{matches === 1 ? "" : "es"}
+                          </span>
+                        )}
+                        <small>
+                          {items.length} product{items.length === 1 ? "" : "s"}
+                        </small>
                       </summary>
                       {items.map((p) => (
                         <div
@@ -168,9 +256,14 @@ export default function ProductPanel({
                         >
                           <Checkbox
                             aria-label={`Select ${p.name}`}
-                            disabled={p.selectable === false && !selected.includes(p.id)}
+                            disabled={
+                              p.selectable === false &&
+                              !selected.includes(p.id)
+                            }
                             checked={selected.includes(p.id)}
-                            onCheckedChange={(v) => toggle([p.id], v === true)}
+                            onCheckedChange={(v) =>
+                              toggle([p.id], v === true)
+                            }
                           />
                           <Box size={17} />
                           <button
@@ -178,8 +271,34 @@ export default function ProductPanel({
                             onClick={() => onSource(p)}
                             title="Compare with source specification"
                           >
-                            {p.name}
-                            <small>{p.description}</small>{!!p.aliases?.length && <small>Also referenced as {p.aliases.map((a) => a.name).join("; ")}</small>}{p.usageStatus === "conditional" && <small>Conditional: {p.condition || p.quote}</small>}{p.selectable === false && <small role="alert">Previously linked · {p.classificationReason} Remove this selection if it is not applicable.</small>}
+                            <span className="product-name-row">
+                              {p.name}
+                              {prioritize && suggestedIds.has(p.id) && (
+                                <Sparkles
+                                  size={14}
+                                  className="suggestion-sparkle"
+                                  aria-label="Suggested for this submittal"
+                                />
+                              )}
+                            </span>
+                            <small>{p.description}</small>
+                            {!!p.aliases?.length && (
+                              <small>
+                                Also referenced as{" "}
+                                {p.aliases.map((a) => a.name).join("; ")}
+                              </small>
+                            )}
+                            {p.usageStatus === "conditional" && (
+                              <small>
+                                Conditional: {p.condition || p.quote}
+                              </small>
+                            )}
+                            {p.selectable === false && (
+                              <small role="alert">
+                                Previously linked · {p.classificationReason}{" "}
+                                Remove this selection if it is not applicable.
+                              </small>
+                            )}
                           </button>
                         </div>
                       ))}
@@ -201,7 +320,8 @@ export default function ProductPanel({
                   <div>
                     <b>One combined submittal</b>
                     <p>
-                      Include all {chosen.length} products in a single new row.
+                      Include all {chosen.length} products on this row. Replaces
+                      any earlier product rows created from it.
                     </p>
                   </div>
                 </label>
@@ -220,16 +340,18 @@ export default function ProductPanel({
           ) : (
             <>
               <h3>
-                Preview {drafts.length} new submittal
-                {drafts.length === 1 ? "" : "s"}
+                {mode === "combined"
+                  ? "Preview update to this submittal"
+                  : `Preview ${drafts.length} new submittal${drafts.length === 1 ? "" : "s"}`}
               </h3>
               <p className="muted">
-                Confirm adds these rows as drafts. You can edit them or compare
-                them with the specification.
+                {mode === "combined"
+                  ? "Confirm updates this row with the selected products and removes duplicate product packages from it."
+                  : "Confirm adds these rows as drafts. You can edit them or compare them with the specification."}
               </p>
               {drafts.map((r, i) => (
                 <article className="generated-card" key={i}>
-                  <Plus size={18} />
+                  {mode === "combined" ? <Box size={18} /> : <Plus size={18} />}
                   <div>
                     <span className="badge review capitalize">
                       {pretty(r.type)}
@@ -237,7 +359,11 @@ export default function ProductPanel({
                     <h3>
                       {r.section} — {r.title}
                     </h3>
-                    <p>{r.text}</p>
+                    <p>
+                      {chosen.length} product{chosen.length === 1 ? "" : "s"}{" "}
+                      included
+                      {mode === "combined" ? " on this submittal" : ""}
+                    </p>
                   </div>
                 </article>
               ))}
@@ -286,10 +412,20 @@ export default function ProductPanel({
             {step < 2 ? (
               <button
                 className="button orange"
-                disabled={!chosen.length || hasExcluded || loading || saving || !!error}
+                disabled={
+                  !chosen.length ||
+                  hasExcluded ||
+                  loading ||
+                  saving ||
+                  !!error
+                }
                 onClick={() => setStep(step + 1)}
               >
-                {step === 0 ? "Create new submittals" : "Preview submittals"}
+                {step === 0
+                  ? "Create new submittals"
+                  : mode === "combined"
+                    ? "Preview update"
+                    : "Preview submittals"}
               </button>
             ) : (
               <button
@@ -304,10 +440,17 @@ export default function ProductPanel({
                       {
                         productIds: selected,
                         mode,
+                        ...(mode === "combined"
+                          ? { revision: row!.revision }
+                          : {}),
                       },
                     );
                     await onSaved(result.createdIds || []);
-                    toast.success("Product submittals added.");
+                    toast.success(
+                      mode === "combined"
+                        ? "Products saved on this submittal."
+                        : "Product submittals added.",
+                    );
                     onClose();
                   } catch (e) {
                     toast.error((e as Error).message);

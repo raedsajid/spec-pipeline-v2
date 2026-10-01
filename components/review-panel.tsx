@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Sheet,
   SheetContent,
@@ -15,10 +15,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Requirement } from "@/lib/domain/models";
 import { Product } from "@/lib/domain/submittals";
+import {
+  prioritizeProductGroups,
+  suggestProductsForRequirement,
+} from "@/lib/domain/product-suggestions";
 import { api, pretty } from "@/lib/api-client";
-import { Save, LoaderCircle } from "lucide-react";
+import { Save, LoaderCircle, Sparkles } from "lucide-react";
 export default function EditSubmittalPanel({
   row,
   onClose,
@@ -32,17 +37,27 @@ export default function EditSubmittalPanel({
     [products, setProducts] = useState<Product[]>([]),
     [loading, setLoading] = useState(false),
     [saving, setSaving] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [prioritize, setPrioritize] = useState(true);
+  const seededFor = useRef<string | null>(null);
   useEffect(() => {
     let live = true;
+    seededFor.current = null;
     setEdit(row ? { ...row } : null);
     setProducts([]);
     setError("");
+    setPrioritize(true);
     setLoading(!!row);
     if (row)
       api(`documents/${row.docId}/products`)
         .then((d) => {
-          if (live) setProducts([...d.products, ...(d.excludedProducts || []).filter((p:Product)=>row?.productIds?.includes(p.id))]);
+          if (live)
+            setProducts([
+              ...d.products,
+              ...(d.excludedProducts || []).filter((p: Product) =>
+                row?.productIds?.includes(p.id),
+              ),
+            ]);
         })
         .catch((e) => {
           if (live) setError(e.message);
@@ -54,6 +69,27 @@ export default function EditSubmittalPanel({
       live = false;
     };
   }, [row]);
+  const suggestions = useMemo(
+    () =>
+      edit && products.length
+        ? suggestProductsForRequirement(edit, products)
+        : [],
+    [edit, products],
+  );
+  const suggestedIds = useMemo(
+    () => new Set(suggestions.map((s) => s.id)),
+    [suggestions],
+  );
+  useEffect(() => {
+    if (!edit || loading || !products.length || seededFor.current === edit.id)
+      return;
+    const ids = suggestions.map((s) => s.id);
+    seededFor.current = edit.id;
+    if (!(edit.productIds && edit.productIds.length) && ids.length)
+      setEdit((prev) =>
+        prev ? { ...prev, productIds: ids } : prev,
+      );
+  }, [edit?.id, edit?.productIds, loading, products.length, suggestions]);
   if (!row || !edit) return null;
   const set = (key: string, value: unknown) =>
     setEdit({ ...edit, [key]: value });
@@ -61,9 +97,21 @@ export default function EditSubmittalPanel({
     set(
       "productIds",
       checked
-        ? [...new Set([...(edit.productIds || []), ...ids.filter(id=>products.find(p=>p.id===id)?.selectable!==false)])]
+        ? [
+            ...new Set([
+              ...(edit.productIds || []),
+              ...ids.filter(
+                (id) => products.find((p) => p.id === id)?.selectable !== false,
+              ),
+            ]),
+          ]
         : (edit.productIds || []).filter((id) => !ids.includes(id)),
     );
+  const rankedGroups = prioritizeProductGroups(
+    products,
+    suggestedIds,
+    prioritize,
+  );
   return (
     <Sheet
       open={!!row}
@@ -158,51 +206,115 @@ export default function EditSubmittalPanel({
             {loading ? (
               <p>Loading products…</p>
             ) : products.length ? (
-              [...new Set(products.map((p) => p.group))].map((group) => {
-                const items = products.filter((p) => p.group === group),
-                  ids = items.map((p) => p.id),
-                  count = ids.filter((id) =>
-                    edit.productIds?.includes(id),
-                  ).length;
-                return (
-                  <details className="product-group" open key={group}>
-                    <summary>
-                      <Checkbox
-                        aria-label={`Select ${group}`}
-                        checked={
-                          count === ids.length
-                            ? true
-                            : count
-                              ? "indeterminate"
-                              : false
-                        }
-                        onClick={(e) => e.stopPropagation()}
-                        onCheckedChange={(v) => toggle(ids, v === true)}
-                      />
-                      {group}
-                      <small>{items.length} products</small>
-                    </summary>
-                    {items.map((p) => (
-                      <label
-                        className={
-                          "product-option " +
-                          (edit.productIds?.includes(p.id) ? "selected" : "")
-                        }
-                        key={p.id}
-                      >
+              <>
+                <div className="suggestion-toolbar">
+                  <label className="suggestion-toggle">
+                    <Sparkles size={16} aria-hidden />
+                    <span>Prioritize suggestions</span>
+                    <Switch
+                      checked={prioritize}
+                      onCheckedChange={setPrioritize}
+                      aria-label="Prioritize suggestions"
+                    />
+                    {prioritize && suggestions.length > 0 && (
+                      <span className="suggestion-match-pill">
+                        {suggestions.length} match
+                        {suggestions.length === 1 ? "" : "es"}
+                      </span>
+                    )}
+                  </label>
+                  {suggestions.length > 0 && (
+                    <button
+                      type="button"
+                      className="text-link suggestion-reset"
+                      onClick={() =>
+                        set("productIds", suggestions.map((s) => s.id))
+                      }
+                    >
+                      Reset to suggestions
+                    </button>
+                  )}
+                </div>
+                {rankedGroups.map(({ group, items, matches }) => {
+                  const ids = items.map((p) => p.id),
+                    count = ids.filter((id) =>
+                      edit.productIds?.includes(id),
+                    ).length;
+                  return (
+                    <details className="product-group" open key={group}>
+                      <summary>
                         <Checkbox
-                          checked={edit.productIds?.includes(p.id) || false}
-                          onCheckedChange={(v) => toggle([p.id], v === true)}
+                          aria-label={`Select ${group}`}
+                          checked={
+                            count === ids.length
+                              ? true
+                              : count
+                                ? "indeterminate"
+                                : false
+                          }
+                          onClick={(e) => e.stopPropagation()}
+                          onCheckedChange={(v) => toggle(ids, v === true)}
                         />
-                        <span>
-                          {p.name}
-                          <small>{p.description}</small>{!!p.aliases?.length && <small>Also referenced as {p.aliases.map((a) => a.name).join("; ")}</small>}{p.usageStatus === "conditional" && <small>Conditional: {p.condition || p.quote}</small>}{p.selectable === false && <small role="alert">Previously linked · {p.classificationReason} Remove this selection if it is not applicable.</small>}
-                        </span>
-                      </label>
-                    ))}
-                  </details>
-                );
-              })
+                        {group}
+                        {prioritize && matches > 0 && (
+                          <span className="suggestion-match-pill">
+                            {matches} match{matches === 1 ? "" : "es"}
+                          </span>
+                        )}
+                        <small>
+                          {items.length} product{items.length === 1 ? "" : "s"}
+                        </small>
+                      </summary>
+                      {items.map((p) => (
+                        <label
+                          className={
+                            "product-option " +
+                            (edit.productIds?.includes(p.id) ? "selected" : "")
+                          }
+                          key={p.id}
+                        >
+                          <Checkbox
+                            checked={edit.productIds?.includes(p.id) || false}
+                            onCheckedChange={(v) =>
+                              toggle([p.id], v === true)
+                            }
+                          />
+                          <span>
+                            <span className="product-name-row">
+                              {p.name}
+                              {prioritize && suggestedIds.has(p.id) && (
+                                <Sparkles
+                                  size={14}
+                                  className="suggestion-sparkle"
+                                  aria-label="Suggested for this submittal"
+                                />
+                              )}
+                            </span>
+                            <small>{p.description}</small>
+                            {!!p.aliases?.length && (
+                              <small>
+                                Also referenced as{" "}
+                                {p.aliases.map((a) => a.name).join("; ")}
+                              </small>
+                            )}
+                            {p.usageStatus === "conditional" && (
+                              <small>
+                                Conditional: {p.condition || p.quote}
+                              </small>
+                            )}
+                            {p.selectable === false && (
+                              <small role="alert">
+                                Previously linked · {p.classificationReason}{" "}
+                                Remove this selection if it is not applicable.
+                              </small>
+                            )}
+                          </span>
+                        </label>
+                      ))}
+                    </details>
+                  );
+                })}
+              </>
             ) : (
               <p className="muted">
                 No product catalog is available for this specification.

@@ -2473,6 +2473,68 @@ button[class*="button"],
   white-space: nowrap;
   font-weight: 400;
 }
+.product-catalog-tabs {
+  margin-bottom: 4px;
+}
+.product-exclude-reason {
+  display: block;
+  color: #9a5b2a;
+  margin-top: 6px;
+}
+.product-move-btn {
+  margin-top: 12px;
+}
+.suggestion-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+.suggestion-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #3d4a52;
+  cursor: pointer;
+}
+.suggestion-toggle > svg {
+  color: #db541d;
+  flex-shrink: 0;
+}
+.suggestion-match-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fff3e8;
+  color: #c64612;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.product-group summary .suggestion-match-pill {
+  margin-left: 4px;
+}
+.suggestion-reset {
+  font-size: 13px;
+  font-weight: 600;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.product-name-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.suggestion-sparkle {
+  color: #db541d;
+  flex-shrink: 0;
+}
 .product-option {
   display: flex;
   align-items: flex-start;

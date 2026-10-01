@@ -1,5 +1,10 @@
 import { assessProduct } from "@/lib/domain/product-classification";
 import { consolidateCatalog } from "@/lib/domain/product-catalog";
+import {
+  applyCatalogOverrides,
+  type CatalogOverrides,
+  type CatalogStatus,
+} from "@/lib/domain/product-overrides";
 import { correctSections } from "@/lib/domain/specifications";
 import { z } from "zod";
 import {
@@ -40,6 +45,7 @@ const key = (hash: string, batch: number) =>
   `${SUBMITTAL_CACHE_PREFIX}/${hash}/${batch}.json`;
 const versionKey = (hash: string) =>
   `${SUBMITTAL_CACHE_PREFIX}/${hash}/version.json`;
+const overridesKey = (docId: string) => `product-overrides/${docId}.json`;
 type Batch = {
   requirements: Requirement[];
   products: Product[];
@@ -94,15 +100,56 @@ export async function catalog(docId: string, uid: string) {
           (assessment.selectable ? products : excludedProducts).push(resolved);
         }
   }
+  const consolidated = consolidateCatalog(
+    products,
+    excludedProducts,
+    evidence,
+    (heading) => `${d.hash}:heading:${heading.id}`,
+  );
+  const overrides = await loadOverrides(docId);
   return {
-    ...consolidateCatalog(
-      products,
-      excludedProducts,
-      evidence,
-      (heading) => `${d.hash}:heading:${heading.id}`,
+    ...applyCatalogOverrides(
+      consolidated.products,
+      consolidated.excludedProducts,
+      overrides,
     ),
     complete: job?.status === "ready",
   };
+}
+async function loadOverrides(docId: string): Promise<CatalogOverrides> {
+  return (await getJSON<CatalogOverrides>(overridesKey(docId))) || {};
+}
+export async function setProductCatalogStatus(
+  docId: string,
+  uid: string,
+  body: unknown,
+) {
+  const b = z
+    .object({
+      productId: z.string().min(1).max(120),
+      status: z.enum(["approved", "excluded"]),
+    })
+    .parse(body);
+  await ownedDoc(docId, uid);
+  const current = await catalog(docId, uid);
+  if (!current.complete)
+    throw new AppError(
+      409,
+      "Generate the submittal log before changing the product catalog.",
+    );
+  const known = [...current.products, ...current.excludedProducts].some(
+    (p) => p.id === b.productId,
+  );
+  if (!known) throw new AppError(404, "Product not found in this specification.");
+  const overrides = await loadOverrides(docId);
+  overrides[b.productId] = b.status as CatalogStatus;
+  await putJSON(overridesKey(docId), overrides);
+  const d = await ownedDoc(docId, uid);
+  await event(
+    d.project_id,
+    `Moved product to ${b.status} catalog on ${d.filename}`,
+  );
+  return catalog(docId, uid);
 }
 async function importLog(docId: string, hash: string) {
   const pd = await one("SELECT * FROM project_docs WHERE id=?", docId);
@@ -332,67 +379,111 @@ export async function createProductSubmittals(
       409,
       "Finish generating the submittal log before creating product submittals.",
     );
+  const allowExcluded = b.mode === "attach" || b.mode === "combined";
   const products = [...new Set(b.productIds)].map((id) =>
-    available.products.find((p) => p.id === id) || (b.mode === "attach" && parent.productIds?.includes(id) ? available.excludedProducts.find(p=>p.id===id) : undefined),
+    available.products.find((p) => p.id === id) ||
+    (allowExcluded && parent.productIds?.includes(id)
+      ? available.excludedProducts.find((p) => p.id === id)
+      : undefined),
   );
   if (products.some((p) => !p))
     throw new AppError(400, "Choose products from this specification.");
-  if (b.mode === "attach") {
+  // Attach and combined update the root obligation in place so the register
+  // does not keep both the original row and a duplicate product package.
+  if (b.mode === "attach" || b.mode === "combined") {
     if (b.revision === undefined || b.revision !== row.revision)
       throw new AppError(
         409,
         "This submittal changed. Close the panel and reopen it before saving.",
       );
+    let targetRow = row;
+    let target: Requirement = parent;
+    if (parent.parentId) {
+      const root = await one(
+        "SELECT r.* FROM requirements r JOIN project_docs d ON d.id=r.doc_id JOIN projects p ON p.id=d.project_id WHERE r.id=? AND p.user_id=?",
+        parent.parentId,
+        u.id,
+      );
+      if (root) {
+        targetRow = root;
+        target = { ...JSON.parse(root.data), id: root.id };
+      }
+    }
+    const targetId = target.id;
     const selectedProducts = products as Product[];
     const unchanged =
-      JSON.stringify([...(parent.productIds || [])].sort()) ===
-      JSON.stringify(selectedProducts.map((p) => p.id).sort());
-    if (unchanged) return { ids: [rid], createdIds: [] };
+      JSON.stringify([...(target.productIds || [])].sort()) ===
+        JSON.stringify(selectedProducts.map((p) => p.id).sort()) &&
+      (b.mode === "attach" || target.productMode === "combined");
+    if (unchanged && b.mode === "attach" && targetId === rid)
+      return { ids: [targetId], createdIds: [] };
     const updated = {
-      ...parent,
+      ...target,
       productIds: selectedProducts.map((p) => p.id),
       products: selectedProducts.map((p) => p.name),
+      productMode:
+        b.mode === "combined" ? ("combined" as const) : target.productMode,
+      parentId: undefined,
       status: "needs_review",
       reviewNote: "",
       warnings: [
         ...new Set([
-          ...parent.warnings,
+          ...target.warnings,
           "Verify that the selected products are covered by this submittal requirement.",
         ]),
       ],
     };
-    const result = await run(
-      "UPDATE requirements SET data=?,status='needs_review',review_note='',revision=revision+1,updated=? WHERE id=? AND revision=?",
-      JSON.stringify(updated),
-      now(),
-      rid,
-      b.revision,
+    // Drop derived product rows that used to sit beside this obligation,
+    // including the open row when it was itself a product package.
+    const siblings = await all(
+      "SELECT id,data,revision FROM requirements WHERE doc_id=?",
+      row.doc_id,
     );
-    if (!result.meta.changes)
+    const derived = siblings.filter((r) => {
+      if (r.id === targetId) return false;
+      const data = JSON.parse(r.data);
+      return data.parentId === targetId || r.id === rid;
+    });
+    const statements = [
+      db()
+        .prepare(
+          "UPDATE requirements SET data=?,status='needs_review',review_note='',revision=revision+1,updated=? WHERE id=? AND revision=?",
+        )
+        .bind(
+          JSON.stringify(updated),
+          now(),
+          targetId,
+          targetRow.revision,
+        ),
+      ...derived.map((r) =>
+        db()
+          .prepare("DELETE FROM requirements WHERE id=? AND revision=?")
+          .bind(r.id, r.revision),
+      ),
+    ];
+    const results = await db().batch(statements);
+    if (!results[0]?.meta.changes)
       throw new AppError(
         409,
         "This submittal changed. Reopen it before saving.",
       );
     const d = await ownedDoc(row.doc_id, u.id);
-    await event(d.project_id, `Updated products on ${parent.title}`);
-    return { ids: [rid], createdIds: [] };
+    await event(
+      d.project_id,
+      b.mode === "combined"
+        ? `Combined ${selectedProducts.length} product(s) on ${target.title}`
+        : `Updated products on ${target.title}`,
+    );
+    return { ids: [targetId], createdIds: [] };
   }
   if (!products.length) throw new AppError(400, "Select at least one product.");
-  const groups =
-    b.mode === "combined"
-      ? [products as Product[]]
-      : (products as Product[]).map((p) => [p]);
+  const groups = (products as Product[]).map((p) => [p]);
   const ids: string[] = [];
   const createdIds: string[] = [];
   for (const group of groups) {
-    const r = productDraft(parent, group, b.mode);
+    const r = productDraft(parent, group, "individual");
     r.id = await sha(
-      rid +
-        (b.mode === "combined" ? ":combined:" : ":") +
-        group
-          .map((p) => p.id)
-          .sort()
-          .join(","),
+      rid + ":" + group.map((p) => p.id).sort().join(","),
     );
     const inserted = await run(
       "INSERT OR IGNORE INTO requirements (id,doc_id,data,status,updated) VALUES (?,?,?,?,?)",

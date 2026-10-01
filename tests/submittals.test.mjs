@@ -430,3 +430,63 @@ test("scope products without a matching Part 2 item stay in the catalog",()=>{
  assert.deepEqual(result.products.map(p=>p.name),["expansion tank"]);
  assert.equal(result.excludedProducts.length,0);
 });
+
+import {
+  prioritizeProductGroups,
+  suggestProductsForRequirement,
+} from "../lib/domain/product-suggestions.ts";
+
+test("gag for safety relief valves suggests relief valves and not blowdown or strainer",()=>{
+ const catalog = [
+  {id:"wrv",name:"Water Relief Valves",group:"2.01 MATERIALS AND MANUFACTURERS",aliases:[{id:"a1",name:"steam/water safety relief valves",page:1,clause:"1.01.B"}],selectable:true},
+  {id:"prv",name:"Pressure Relief Valves",group:"2.01 MATERIALS AND MANUFACTURERS",aliases:[{id:"a2",name:"steam/water safety relief valves",page:1,clause:"1.01.B"}],selectable:true},
+  {id:"tank",name:"Boiler Blowdown Separator / Tank",group:"2.01 MATERIALS AND MANUFACTURERS",aliases:[{id:"a3",name:"steam boiler blowdown separators",page:1,clause:"1.01.B"}],selectable:true},
+  {id:"strainer",name:"Y-type strainer",group:"2.01 MATERIALS AND MANUFACTURERS",selectable:true},
+  {id:"trv",name:"temperature regulating valve",group:"2.01 MATERIALS AND MANUFACTURERS",selectable:true},
+ ];
+ const byName = suggestProductsForRequirement({
+  title:"detail of gag for the safety relief valves",
+  text:"Submit detail of gag for the safety relief valves.",
+  quote:"Submit detail of gag for the safety relief valves.",
+  products:["safety relief valves"],
+ },catalog);
+ assert.deepEqual(byName.map(s=>s.id),["prv","wrv"]);
+ const byText = suggestProductsForRequirement({
+  title:"detail of gag for the safety relief valves",
+  text:"Submit detail of gag for the safety relief valves.",
+  quote:"Submit detail of gag for the safety relief valves.",
+  products:[],
+ },catalog);
+ assert.ok(byText.some(s=>s.id==="wrv"));
+ assert.ok(byText.some(s=>s.id==="prv"));
+ assert.ok(!byText.some(s=>s.id==="tank"||s.id==="strainer"));
+});
+
+test("prioritizeProductGroups floats match-heavy groups and suggested items first",()=>{
+ const products = [
+  {id:"a",name:"A",group:"2.02 OTHER",selectable:true},
+  {id:"b",name:"B",group:"2.01 MATERIALS",selectable:true},
+  {id:"c",name:"C",group:"2.01 MATERIALS",selectable:true},
+ ];
+ const ranked = prioritizeProductGroups(products,new Set(["b","c"]),true);
+ assert.deepEqual(ranked.map(g=>[g.group,g.matches,g.items.map(p=>p.id)]),[
+  ["2.01 MATERIALS",2,["b","c"]],
+  ["2.02 OTHER",0,["a"]],
+ ]);
+ const natural = prioritizeProductGroups(products,new Set(["b","c"]),false);
+ assert.deepEqual(natural.map(g=>g.group),["2.02 OTHER","2.01 MATERIALS"]);
+});
+
+import { applyCatalogOverrides } from "../lib/domain/product-overrides.ts";
+test("catalog overrides move products between approved and excluded",()=>{
+ const approved=[{id:"a",name:"Valve",group:"2.01",selectable:true,description:"",evidenceIds:["e"],quote:"Provide valve.",page:1,section:"15570",clause:"2.01"}];
+ const excluded=[{id:"b",name:"carbon steel",group:"2.01",selectable:false,classificationReason:"Constituent material.",description:"",evidenceIds:["e"],quote:"Construct of carbon steel.",page:1,section:"15570",clause:"2.01"}];
+ const forced=applyCatalogOverrides(approved,excluded,{b:"approved",a:"excluded"});
+ assert.deepEqual(forced.products.map(p=>p.id),["b"]);
+ assert.equal(forced.products[0].selectable,true);
+ assert.deepEqual(forced.excludedProducts.map(p=>p.id),["a"]);
+ assert.equal(forced.excludedProducts[0].selectable,false);
+ const untouched=applyCatalogOverrides(approved,excluded,{});
+ assert.deepEqual(untouched.products.map(p=>p.id),["a"]);
+ assert.deepEqual(untouched.excludedProducts.map(p=>p.id),["b"]);
+});

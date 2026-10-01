@@ -41,6 +41,7 @@ import {
   catalog,
   generateLogStep,
   createProductSubmittals,
+  setProductCatalogStatus,
 } from "@/lib/services/submittals";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -230,6 +231,13 @@ async function handle(request: Request) {
       method === "GET"
     )
       output = await catalog(key, u.id);
+    else if (
+      resource === "documents" &&
+      key &&
+      action === "products" &&
+      method === "POST"
+    )
+      output = await setProductCatalogStatus(key, u.id, await request.json());
     else if (
       resource === "requirements" &&
       key &&
