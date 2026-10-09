@@ -1,5 +1,10 @@
 # Changes
 
+## 2026-10-09 — raise Gemini output budget for extraction batches
+
+- Increased `maxOutputTokens` to 65536 so requirement+product JSON is less likely to truncate with `incomplete or blocked response`.
+- Surface Gemini `finishReason` / block reason in the error text. Retry generation after deploy; saved batches are reused.
+
 ## 2026-10-09 — tolerate null/object requirement product suggestions
 
 - Gemini sometimes returns `null` or `{name:"..."}` entries in `requirements[].products`, which paused log generation with `invalid_extraction`. Those entries are now dropped or coerced to plain names so the batch can continue. Non-array `products` values still fail validation.

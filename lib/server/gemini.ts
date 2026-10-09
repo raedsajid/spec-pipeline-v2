@@ -100,6 +100,25 @@ async function call(path: string, body: any, uid: string) {
   }
   return response.json() as Promise<any>;
 }
+function candidateText(candidate: any) {
+  return (candidate?.content?.parts || [])
+    .filter((p: any) => p.text)
+    .map((p: any) => p.text)
+    .join("");
+}
+
+function parseJsonOutput(text: string) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new AppError(
+      502,
+      "Gemini returned malformed output. Retry this batch.",
+      "invalid_output",
+    );
+  }
+}
+
 export async function generate(
   system: string,
   text: string,
@@ -119,33 +138,49 @@ export async function generate(
       generationConfig: {
         temperature: 0,
         responseMimeType: "application/json",
-        maxOutputTokens: 16000,
+        // Extraction returns requirements + products; 16k was truncating large batches.
+        maxOutputTokens: 65536,
         thinkingConfig: { thinkingBudget: 0 },
       },
     },
     uid,
   );
-  const c = data.candidates?.[0];
-  if (!c || c.finishReason !== "STOP")
+  const blocked = data.promptFeedback?.blockReason;
+  if (blocked)
     throw new AppError(
       502,
-      "Gemini returned an incomplete or blocked response. Retry this batch.",
+      `Gemini blocked this batch (${blocked}). Progress is saved; retry generation.`,
+      "blocked_output",
+    );
+  const c = data.candidates?.[0];
+  const finish = c?.finishReason;
+  const output = candidateText(c);
+  if (!c || !output) {
+    throw new AppError(
+      502,
+      `Gemini returned an incomplete or blocked response${finish ? ` (${finish})` : ""}. Retry this batch.`,
       "incomplete_output",
     );
-  try {
-    return JSON.parse(
-      c.content.parts
-        .filter((p: any) => p.text)
-        .map((p: any) => p.text)
-        .join(""),
-    );
-  } catch {
-    throw new AppError(
-      502,
-      "Gemini returned malformed output. Retry this batch.",
-      "invalid_output",
-    );
   }
+  // Accept a finished JSON payload even when the model hit MAX_TOKENS after closing it.
+  if (finish === "STOP" || finish === "MAX_TOKENS") {
+    try {
+      return parseJsonOutput(output);
+    } catch (error) {
+      if (finish === "MAX_TOKENS")
+        throw new AppError(
+          502,
+          "Gemini hit the output limit before finishing this batch. Progress is saved; retry generation.",
+          "truncated_output",
+        );
+      throw error;
+    }
+  }
+  throw new AppError(
+    502,
+    `Gemini returned an incomplete or blocked response (${finish}). Retry this batch.`,
+    "incomplete_output",
+  );
 }
 export async function embed(
   texts: string[],
