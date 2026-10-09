@@ -532,7 +532,7 @@ export default function Workspace() {
                   <div className="warning-box">
                     For a zero-cost setup, use a Gemini project without paid
                     billing. BuildERP caps AI requests at 150 per day globally
-                    and 75 per account; Google may apply lower quotas. A request
+                    and 100 per account; Google may apply lower quotas. A request
                     cap cannot prevent charges on a billing-enabled key.
                   </div>
                   <a

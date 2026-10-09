@@ -63,7 +63,7 @@ export const embedModel = () =>
 async function call(path: string, body: any, uid: string) {
   const key = await apiKey();
   await consumeLimit("ai:global", 150, 86400000);
-  await consumeLimit("ai:user:" + uid, 75, 86400000);
+  await consumeLimit("ai:user:" + uid, 100, 86400000);
   const response = await fetch(
     "https://generativelanguage.googleapis.com/v1beta/" + path,
     {
