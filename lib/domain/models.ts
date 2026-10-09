@@ -48,7 +48,29 @@ export const RequirementSchema = z.object({
     .transform((value) => value ?? ""),
   evidenceIds: z.array(z.string()).min(1).max(30),
   quote: z.string().min(1).max(6000),
-  products: z.array(z.string().max(200)).max(60).default([]),
+  // Gemini sometimes returns null entries or {name:"..."} objects in products[].
+  // Drop blanks/nulls; coerce a string name field; reject non-array products.
+  products: z.preprocess((value) => {
+    if (value == null) return [];
+    if (!Array.isArray(value)) return value;
+    const names: string[] = [];
+    for (const item of value) {
+      if (typeof item === "string") {
+        const name = item.trim();
+        if (name && name.length <= 200) names.push(name);
+        continue;
+      }
+      if (
+        item &&
+        typeof item === "object" &&
+        typeof (item as { name?: unknown }).name === "string"
+      ) {
+        const name = (item as { name: string }).name.trim();
+        if (name && name.length <= 200) names.push(name);
+      }
+    }
+    return names.slice(0, 60);
+  }, z.array(z.string().max(200)).max(60).default([])),
 });
 export type RequirementInput = z.infer<typeof RequirementSchema>;
 export type Requirement = RequirementInput & {

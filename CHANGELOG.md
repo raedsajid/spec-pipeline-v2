@@ -1,5 +1,10 @@
 # Changes
 
+## 2026-10-09 — tolerate null/object requirement product suggestions
+
+- Gemini sometimes returns `null` or `{name:"..."}` entries in `requirements[].products`, which paused log generation with `invalid_extraction`. Those entries are now dropped or coerced to plain names so the batch can continue. Non-array `products` values still fail validation.
+- No cache/version bump required; use **Retry generation** on the paused document.
+
 ## 2026-10-09 — obligation-first submittal extraction (v5)
 
 - Submittal log generation now follows obligation-first ideology: prefer Submittals-article evidence, one requirement per clause + deliverable type, and treat named products as catalog suggestions rather than duplicate log rows.

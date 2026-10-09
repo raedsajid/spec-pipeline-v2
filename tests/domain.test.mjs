@@ -63,6 +63,35 @@ test("condition normalization does not conceal malformed fields", () => {
     false,
   );
 });
+test("null and object product suggestions do not reject a requirement batch", () => {
+  const batch = [
+    { ...requirement, title: "Requirement 1", products: ["steel doors"] },
+    {
+      ...requirement,
+      title: "Requirement 2",
+      products: [null, "valves", { name: "strainers" }, "", "  "],
+    },
+    { ...requirement, title: "Requirement 3", products: null },
+    {
+      ...requirement,
+      title: "Requirement 4",
+      products: [{ name: "hangers" }, null],
+    },
+  ];
+  const parsed = RequirementSchema.array().parse(batch);
+  assert.equal(parsed.length, 4);
+  assert.deepEqual(parsed[0].products, ["steel doors"]);
+  assert.deepEqual(parsed[1].products, ["valves", "strainers"]);
+  assert.deepEqual(parsed[2].products, []);
+  assert.deepEqual(parsed[3].products, ["hangers"]);
+});
+test("non-array products still fail validation", () => {
+  assert.equal(
+    RequirementSchema.safeParse({ ...requirement, products: "steel doors" })
+      .success,
+    false,
+  );
+});
 test("approval requires both exact evidence and human confirmation", () => {
   const checks = validateRequirement(requirement, evidence);
   assert.deepEqual(checks, { blocking: [], warnings: [] });
