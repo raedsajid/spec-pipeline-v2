@@ -1,5 +1,10 @@
 # Changes
 
+## 2026-10-09 — drop Submittals article preamble rows (log v7)
+
+- Article intros that only say submittals will be provided “as detailed below” / “as follows”, or generic “provide submittals” without a named deliverable, are no longer imported as log rows.
+- Prompt updated accordingly. Extraction cache stays at v6; imported log version is v7 so **Retry generation** / regenerate log re-imports saved batches without a full Gemini rerun. Reviewed rows are preserved.
+
 ## 2026-10-09 — shrink extraction batches and split on Gemini capacity failures (v6)
 
 - Gemini 2.5 Flash was returning empty JSON with `MAX_TOKENS` when thinking/output budget was exhausted on large requirement+product batches.

@@ -5,6 +5,8 @@ import {
   tagExtractionEvidence,
   submittalEvidenceIds,
   filterRequirementsBySubmittalEvidence,
+  filterPreambleRequirements,
+  isSubmittalPreambleRequirement,
   productDraft,
   sameRequirement,
   SUBMITTAL_CACHE_PREFIX,
@@ -161,6 +163,26 @@ test("without a Submittals heading every eligible line is usable for requirement
   assert.equal(result.hasSubmittalRegion, false);
   assert.equal(result.tagged.find((e) => e.id === "b")?.role, "product");
   assert.equal(submittalEvidenceIds(result).size, 2);
+});
+test("submittal article preamble is not a log line item", () => {
+  const preamble = {
+    title: "Supplemental Submittals for Vibration Isolation and Seismic Bracing Products",
+    text: "The manufacturer of vibration isolation and seismic bracing shall provide submittals for products as detailed below. These are to be submitted for record purposes only.",
+    quote: "shall provide submittals for products as detailed below",
+    type: "other",
+  };
+  const concrete = {
+    title: "Product Data",
+    text: "Submit product data for vibration isolators.",
+    quote: "Submit product data for vibration isolators.",
+    type: "product_data",
+  };
+  assert.equal(isSubmittalPreambleRequirement(preamble), true);
+  assert.equal(isSubmittalPreambleRequirement(concrete), false);
+  assert.deepEqual(
+    filterPreambleRequirements([preamble, concrete]).map((r) => r.title),
+    ["Product Data"],
+  );
 });
 test("requirements citing only Part 2 evidence are dropped when a submittal region exists", () => {
   const result = tagExtractionEvidence([
@@ -427,7 +449,7 @@ test("validated extraction keeps non-catalog candidates inspectable but non-sele
 
 test("product extraction cache and imported log versions are bumped",()=>{
  assert.equal(SUBMITTAL_EXTRACTION_VERSION,6);
- assert.equal(SUBMITTAL_LOG_VERSION,6);
+ assert.equal(SUBMITTAL_LOG_VERSION,7);
  assert.equal(SUBMITTAL_CACHE_PREFIX,"cache/submittals-v6");
 });
 

@@ -26,6 +26,7 @@ import {
   tagExtractionEvidence,
   submittalEvidenceIds,
   filterRequirementsBySubmittalEvidence,
+  filterPreambleRequirements,
   productDraft,
   sameRequirement,
   type TaggedEvidence,
@@ -109,6 +110,7 @@ OBLIGATION-FIRST ATOMICITY:
 - Never create separate requirements merely because one clause names multiple products, drawing contents, dimensions, or technical details.
 - Child clauses that only describe the contents of a parent submittal do not automatically create new requirements.
 - Example: Product Data naming several products plus installation instructions → ONE product_data requirement with multiple products[] entries.
+- Do NOT create a requirement from article preamble/intro text that only says submittals will be provided "as detailed below", "as follows", or similar, or that only states generic "provide/submit submittals" without naming a concrete deliverable (product data, shop drawings, sample, certification, test report, calculations, O&M, warranty, etc.). Extract the specific deliverables listed under that article instead. Sign/seal, "for record purposes", and structural-verification sentences alone are not submittal log rows.
 - Technical properties alone are not submittals. Preserve conditions and cross-references. Do not invent obligations.
 
 TYPE CLASSIFICATION:
@@ -233,7 +235,7 @@ async function importLog(docId: string, hash: string) {
     if (!batch)
       throw new AppError(503, "Saved log is unavailable. Please retry.");
     omittedProducts += batch.omittedProducts || 0;
-    for (const r of batch.requirements) {
+    for (const r of filterPreambleRequirements(batch.requirements)) {
       if (
         rows.some((a) => sameRequirement(a, r)) ||
         retained.some((a) => sameRequirement(JSON.parse(a.data), r))
@@ -322,9 +324,11 @@ export async function generateLogStep(docId: string, u: User) {
       let saved = await getJSON<Batch>(key(d.hash, job.cursor));
       if (!saved) {
         const raw = await extractBatchRaw(batch, u.id);
-        const scoped = filterRequirementsBySubmittalEvidence(
-          raw.requirements,
-          allowedSubmittalIds,
+        const scoped = filterPreambleRequirements(
+          filterRequirementsBySubmittalEvidence(
+            raw.requirements,
+            allowedSubmittalIds,
+          ),
         );
         const requirements: Requirement[] = [];
         for (const r of scoped) {

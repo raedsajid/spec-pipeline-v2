@@ -4,7 +4,7 @@ import { AppError, RequirementSchema, normalize, sourceIncludes } from "./models
 import type { Evidence, Requirement } from "./models";
 
 export const SUBMITTAL_EXTRACTION_VERSION = 6;
-export const SUBMITTAL_LOG_VERSION = 6;
+export const SUBMITTAL_LOG_VERSION = 7;
 export const SUBMITTAL_CACHE_PREFIX = `cache/submittals-v${SUBMITTAL_EXTRACTION_VERSION}`;
 
 export type ExtractionRole = "submittal" | "product" | "other";
@@ -277,6 +277,43 @@ export function filterRequirementsBySubmittalEvidence<
   return requirements.filter((r) =>
     r.evidenceIds.some((id) => submittalIds.has(id)),
   );
+}
+
+const PREAMBLE_POINTER_RE =
+  /\b(?:as\s+detailed\s+below|as\s+follows|as\s+listed\s+below|as\s+specified\s+below|the\s+following\s+(?:submittals?|items?|requirements?))\b/i;
+const GENERIC_SUBMITTAL_OBLIGATION_RE =
+  /\b(?:shall\s+)?(?:provide|submit|furnish)\s+submittals?\b/i;
+const NAMED_DELIVERABLE_RE =
+  /\b(?:product\s+data|shop\s+drawings?|samples?|certifications?|certificates?|test\s+reports?|test\s+results?|calculations?|warrant(?:y|ies)|closeout|operation\s+and\s+maintenance|o\s*&\s*m\b|maintenance\s+data|quality\s+control\s+submittals?)\b/i;
+
+/**
+ * Article intros that only point to later detail ("as detailed below") are not
+ * independently trackable log rows. Keep specific deliverable obligations.
+ */
+export function isSubmittalPreambleRequirement(r: {
+  title?: string;
+  text?: string;
+  quote?: string;
+  type?: string;
+}) {
+  const body = normalize(
+    [r.title, r.text, r.quote].filter(Boolean).join(" "),
+  );
+  if (!body) return false;
+  if (PREAMBLE_POINTER_RE.test(body)) return true;
+  if (
+    (r.type === "other" || !r.type) &&
+    GENERIC_SUBMITTAL_OBLIGATION_RE.test(body) &&
+    !NAMED_DELIVERABLE_RE.test(body)
+  )
+    return true;
+  return false;
+}
+
+export function filterPreambleRequirements<
+  T extends { title?: string; text?: string; quote?: string; type?: string },
+>(requirements: T[]): T[] {
+  return requirements.filter((r) => !isSubmittalPreambleRequirement(r));
 }
 
 export function sameRequirement(a: Requirement, b: Requirement) {
