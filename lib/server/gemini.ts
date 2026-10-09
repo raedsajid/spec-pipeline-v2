@@ -155,11 +155,18 @@ export async function generate(
   const c = data.candidates?.[0];
   const finish = c?.finishReason;
   const output = candidateText(c);
+  const thoughts = data.usageMetadata?.thoughtsTokenCount;
+  const usageHint =
+    typeof thoughts === "number" && thoughts > 0
+      ? ` (thinking tokens ${thoughts})`
+      : "";
   if (!c || !output) {
     throw new AppError(
       502,
-      `Gemini returned an incomplete or blocked response${finish ? ` (${finish})` : ""}. Retry this batch.`,
-      "incomplete_output",
+      finish === "MAX_TOKENS"
+        ? `Gemini used up its output budget before returning JSON${usageHint}. Progress is saved; retry generation.`
+        : `Gemini returned an incomplete or blocked response${finish ? ` (${finish})` : ""}${usageHint}. Retry this batch.`,
+      finish === "MAX_TOKENS" ? "truncated_output" : "incomplete_output",
     );
   }
   // Accept a finished JSON payload even when the model hit MAX_TOKENS after closing it.
@@ -170,7 +177,7 @@ export async function generate(
       if (finish === "MAX_TOKENS")
         throw new AppError(
           502,
-          "Gemini hit the output limit before finishing this batch. Progress is saved; retry generation.",
+          `Gemini hit the output limit before finishing this batch${usageHint}. Progress is saved; retry generation.`,
           "truncated_output",
         );
       throw error;
@@ -178,7 +185,7 @@ export async function generate(
   }
   throw new AppError(
     502,
-    `Gemini returned an incomplete or blocked response (${finish}). Retry this batch.`,
+    `Gemini returned an incomplete or blocked response (${finish})${usageHint}. Retry this batch.`,
     "incomplete_output",
   );
 }

@@ -1,5 +1,11 @@
 # Changes
 
+## 2026-10-09 — shrink extraction batches and split on Gemini capacity failures (v6)
+
+- Gemini 2.5 Flash was returning empty JSON with `MAX_TOKENS` when thinking/output budget was exhausted on large requirement+product batches.
+- Extraction now sends only `submittal`/`product` evidence when a Submittals region exists, uses ~6k-character batches, and automatically splits a failed batch up to 3 times.
+- Bumped extraction cache and imported log version to v6. After deploy, click **Retry generation** (jobs restart on the new cache version).
+
 ## 2026-10-09 — raise Gemini output budget for extraction batches
 
 - Increased `maxOutputTokens` to 65536 so requirement+product JSON is less likely to truncate with `incomplete or blocked response`.

@@ -3,8 +3,8 @@ import { z } from "zod";
 import { AppError, RequirementSchema, normalize, sourceIncludes } from "./models";
 import type { Evidence, Requirement } from "./models";
 
-export const SUBMITTAL_EXTRACTION_VERSION = 5;
-export const SUBMITTAL_LOG_VERSION = 5;
+export const SUBMITTAL_EXTRACTION_VERSION = 6;
+export const SUBMITTAL_LOG_VERSION = 6;
 export const SUBMITTAL_CACHE_PREFIX = `cache/submittals-v${SUBMITTAL_EXTRACTION_VERSION}`;
 
 export type ExtractionRole = "submittal" | "product" | "other";

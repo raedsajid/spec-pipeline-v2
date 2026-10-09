@@ -426,9 +426,9 @@ test("validated extraction keeps non-catalog candidates inspectable but non-sele
 });
 
 test("product extraction cache and imported log versions are bumped",()=>{
- assert.equal(SUBMITTAL_EXTRACTION_VERSION,5);
- assert.equal(SUBMITTAL_LOG_VERSION,5);
- assert.equal(SUBMITTAL_CACHE_PREFIX,"cache/submittals-v5");
+ assert.equal(SUBMITTAL_EXTRACTION_VERSION,6);
+ assert.equal(SUBMITTAL_LOG_VERSION,6);
+ assert.equal(SUBMITTAL_CACHE_PREFIX,"cache/submittals-v6");
 });
 
 import { sourceIncludes, validateRequirement } from "../lib/domain/models.ts";
