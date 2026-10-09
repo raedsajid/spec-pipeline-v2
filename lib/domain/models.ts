@@ -119,9 +119,9 @@ export function mayApprove(r: Requirement, confirmed: boolean, note: string) {
     (!r.warnings.length || note.trim().length >= 8)
   );
 }
-export function buildBatches(evidence: Evidence[], budget = 14000) {
-  const batches: Evidence[][] = [];
-  let b: Evidence[] = [],
+export function buildBatches<T extends Evidence>(evidence: T[], budget = 14000) {
+  const batches: T[][] = [];
+  let b: T[] = [],
     n = 0;
   for (const e of evidence) {
     const cost = e.text.length + 100;
