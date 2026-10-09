@@ -1,5 +1,12 @@
 # Changes
 
+## 2026-10-09 — obligation-first submittal extraction (v5)
+
+- Submittal log generation now follows obligation-first ideology: prefer Submittals-article evidence, one requirement per clause + deliverable type, and treat named products as catalog suggestions rather than duplicate log rows.
+- Evidence lines are tagged `submittal` / `product` / `other` for the model; requirements that cite no submittal-role evidence are dropped when a Submittals region exists. If no Submittals heading is detected, eligible text remains usable (fallback).
+- Product catalog extraction, Groups & Products packaging (attach / combined / individual), and the rest of the UI are unchanged.
+- Bumped extraction cache and imported log version to v5; regenerate the submittal log to pick up the change. Reviewed rows are preserved.
+
 ## 2026-09-30 — product recall and scope consolidation (v4)
 
 - Fixed silent omission of products whose names wrap across PDF lines (e.g. "Y-" / "type strainer"): quote verification now ignores line-break whitespace and hyphenation, and short-quote recovery may use up to three consecutive cited lines. Requirement quote checks use the same comparison.

@@ -3,9 +3,17 @@ import { z } from "zod";
 import { AppError, RequirementSchema, normalize, sourceIncludes } from "./models";
 import type { Evidence, Requirement } from "./models";
 
-export const SUBMITTAL_EXTRACTION_VERSION = 4;
-export const SUBMITTAL_LOG_VERSION = 4;
+export const SUBMITTAL_EXTRACTION_VERSION = 5;
+export const SUBMITTAL_LOG_VERSION = 5;
 export const SUBMITTAL_CACHE_PREFIX = `cache/submittals-v${SUBMITTAL_EXTRACTION_VERSION}`;
+
+export type ExtractionRole = "submittal" | "product" | "other";
+export type TaggedEvidence = Evidence & { role: ExtractionRole };
+
+const SUBMITTAL_ARTICLE_RE =
+  /^(?:supplemental\s+)?(?:action|informational|quality\s+control|closeout)?\s*submittals?\s*$|^(?:operation\s+and\s+)?maintenance\s+data$|^quality\s+control\s+submittals?$/i;
+const PRODUCT_ARTICLE_RE =
+  /\b(?:products?|materials?|systems?|equipment|fabrication|fabricated|manufacturers?|assembl(?:y|ies))\b/i;
 
 export const ProductSchema = z.object({
   name: z.string().min(1).max(200),
@@ -158,13 +166,117 @@ export function extractionEvidence(evidence: Evidence[]) {
       .replace(/^\s*(?:\d+(?:\.\d+)*|[A-Z])[.)]?\s+/, "")
       .trim();
     if (
-      /^(?:submittals?\s+(?:check\s*list|schedule|register)|check\s*list\s+(?:of\s+|for\s+)?submittals|list\s+of\s+submittals)\s*[:–—-]?$/i.test(
+      /^(?:submittals?\s+(?:check\s*list|schedule|register|log|index)|check\s*list\s+(?:of\s+|for\s+)?submittals|list\s+of\s+submittals)\s*[:–—-]?$/i.test(
         heading,
       )
     )
       checklist = true;
     return !checklist;
   });
+}
+
+function stripHeadingPrefix(text: string) {
+  return text.replace(/^\s*(?:\d+(?:\.\d+)*|[A-Z])[.)]?\s+/, "").trim();
+}
+
+function isSubmittalArticleHeading(e: Evidence) {
+  const title = (e.articleTitle || "").trim();
+  if (title && SUBMITTAL_ARTICLE_RE.test(title)) return true;
+  const heading = stripHeadingPrefix(e.text);
+  return SUBMITTAL_ARTICLE_RE.test(heading);
+}
+
+function isProductCatalogEvidence(e: Evidence) {
+  if (e.part === "2") return true;
+  const title = (e.articleTitle || "").trim();
+  if (title && PRODUCT_ARTICLE_RE.test(title)) return true;
+  if (/^PART\s+2\b/i.test(e.text.trim())) return true;
+  return PRODUCT_ARTICLE_RE.test(stripHeadingPrefix(e.text));
+}
+
+function isPartBoundary(e: Evidence) {
+  return /^PART\s+\d+\b/i.test(e.text.trim());
+}
+
+function isSectionBoundary(e: Evidence) {
+  return /^\s*SECTION\s+\d/i.test(e.text.trim());
+}
+
+export type TaggedExtraction = {
+  tagged: TaggedEvidence[];
+  /** True when at least one Submittals-like article was detected. */
+  hasSubmittalRegion: boolean;
+};
+
+/** Tag checklist-eligible lines as submittal / product / other for obligation-first extraction. */
+export function tagExtractionEvidence(evidence: Evidence[]): TaggedExtraction {
+  const eligible = extractionEvidence(evidence);
+  const submittalIds = new Set<string>();
+  let activeArticle: string | undefined;
+  let inSubmittal = false;
+
+  for (const e of eligible) {
+    if (isSectionBoundary(e) || isPartBoundary(e)) {
+      inSubmittal = false;
+      activeArticle = undefined;
+    }
+    if (isSubmittalArticleHeading(e)) {
+      inSubmittal = true;
+      activeArticle = e.article || undefined;
+      submittalIds.add(e.id);
+      continue;
+    }
+    if (inSubmittal) {
+      if (
+        activeArticle &&
+        e.article &&
+        e.article !== activeArticle &&
+        !e.article.startsWith(activeArticle + ".")
+      ) {
+        // New numbered article ends the submittal region unless it is itself a submittal heading.
+        if (isSubmittalArticleHeading(e)) {
+          activeArticle = e.article;
+          submittalIds.add(e.id);
+          continue;
+        }
+        inSubmittal = false;
+        activeArticle = undefined;
+      } else {
+        submittalIds.add(e.id);
+      }
+    }
+  }
+
+  const hasSubmittalRegion = submittalIds.size > 0;
+  const tagged = eligible.map((e) => {
+    if (hasSubmittalRegion && submittalIds.has(e.id))
+      return { ...e, role: "submittal" as const };
+    if (isProductCatalogEvidence(e))
+      return { ...e, role: "product" as const };
+    // Fallback: no Submittals article — every eligible line may ground a requirement.
+    if (!hasSubmittalRegion) return { ...e, role: "submittal" as const };
+    return { ...e, role: "other" as const };
+  });
+  return { tagged, hasSubmittalRegion };
+}
+
+/** IDs allowed to ground requirements (submittal role, or all eligible when falling back). */
+export function submittalEvidenceIds(result: TaggedExtraction) {
+  if (!result.hasSubmittalRegion)
+    return new Set(result.tagged.map((e) => e.id));
+  return new Set(
+    result.tagged.filter((e) => e.role === "submittal").map((e) => e.id),
+  );
+}
+
+/** Drop requirements that cite no allowed submittal evidence when a region exists. */
+export function filterRequirementsBySubmittalEvidence<
+  T extends { evidenceIds: string[] },
+>(requirements: T[], submittalIds: Set<string>): T[] {
+  if (!submittalIds.size) return requirements;
+  return requirements.filter((r) =>
+    r.evidenceIds.some((id) => submittalIds.has(id)),
+  );
 }
 
 export function sameRequirement(a: Requirement, b: Requirement) {

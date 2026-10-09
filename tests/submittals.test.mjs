@@ -2,13 +2,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   extractionEvidence,
+  tagExtractionEvidence,
+  submittalEvidenceIds,
+  filterRequirementsBySubmittalEvidence,
   productDraft,
   sameRequirement,
   SUBMITTAL_CACHE_PREFIX,
   SUBMITTAL_EXTRACTION_VERSION,
   SUBMITTAL_LOG_VERSION,
 } from "../lib/domain/submittals.ts";
-const ev = (id, text, page = 1) => ({
+const ev = (id, text, page = 1, extra = {}) => ({
   id,
   text,
   page,
@@ -16,6 +19,7 @@ const ev = (id, text, page = 1) => ({
   clause: "",
   source: "pdf",
   box: [0, 0, 1, 0.1],
+  ...extra,
 });
 test("checklist recaps are excluded but substantive late requirements remain", () => {
   const source = [
@@ -90,6 +94,102 @@ test("repeated running section headers do not re-enable a checklist", () => {
   assert.deepEqual(
     extractionEvidence(source).map((e) => e.id),
     ["a"],
+  );
+});
+test("submittal article is tagged submittal; next article is not", () => {
+  const { tagged, hasSubmittalRegion } = tagExtractionEvidence([
+    ev("sec", "SECTION 081113 - STEEL DOORS"),
+    ev("h", "1.03 SUBMITTALS", 1, {
+      article: "1.03",
+      articleTitle: "SUBMITTALS",
+      part: "1",
+    }),
+    ev("body", "A. Submit shop drawings.", 1, {
+      article: "1.03",
+      articleTitle: "SUBMITTALS",
+      part: "1",
+      clause: "1.03.A",
+    }),
+    ev("next", "1.04 QUALITY ASSURANCE", 1, {
+      article: "1.04",
+      articleTitle: "QUALITY ASSURANCE",
+      part: "1",
+    }),
+    ev("qa", "Comply with referenced standards.", 1, {
+      article: "1.04",
+      articleTitle: "QUALITY ASSURANCE",
+      part: "1",
+    }),
+    ev("p2", "PART 2 - PRODUCTS", 2, { part: "2" }),
+    ev("prod", "2.01 STEEL DOORS", 2, {
+      article: "2.01",
+      articleTitle: "STEEL DOORS",
+      part: "2",
+    }),
+  ]);
+  assert.equal(hasSubmittalRegion, true);
+  const byId = Object.fromEntries(tagged.map((e) => [e.id, e.role]));
+  assert.equal(byId.h, "submittal");
+  assert.equal(byId.body, "submittal");
+  assert.notEqual(byId.next, "submittal");
+  assert.notEqual(byId.qa, "submittal");
+  assert.equal(byId.prod, "product");
+});
+test("checklist lines stay excluded from tagged evidence", () => {
+  const { tagged } = tagExtractionEvidence([
+    ev("h", "1.03 SUBMITTALS", 1, {
+      article: "1.03",
+      articleTitle: "SUBMITTALS",
+    }),
+    ev("body", "Submit product data.", 1, {
+      article: "1.03",
+      articleTitle: "SUBMITTALS",
+    }),
+    ev("cl", "SUBMITTAL CHECKLIST", 10),
+    ev("item", "Shop drawings", 10),
+  ]);
+  assert.deepEqual(
+    tagged.map((e) => e.id),
+    ["h", "body"],
+  );
+});
+test("without a Submittals heading every eligible line is usable for requirements", () => {
+  const result = tagExtractionEvidence([
+    ev("a", "Submit shop drawings for steel doors."),
+    ev("b", "Provide fiberglass insulation.", 1, { part: "2" }),
+  ]);
+  assert.equal(result.hasSubmittalRegion, false);
+  assert.equal(result.tagged.find((e) => e.id === "b")?.role, "product");
+  assert.equal(submittalEvidenceIds(result).size, 2);
+});
+test("requirements citing only Part 2 evidence are dropped when a submittal region exists", () => {
+  const result = tagExtractionEvidence([
+    ev("h", "1.03 SUBMITTALS", 1, {
+      article: "1.03",
+      articleTitle: "SUBMITTALS",
+    }),
+    ev("body", "Submit product data for steel doors.", 1, {
+      article: "1.03",
+      articleTitle: "SUBMITTALS",
+    }),
+    ev("prod", "Steel doors shall be galvanized.", 2, {
+      article: "2.01",
+      articleTitle: "STEEL DOORS",
+      part: "2",
+    }),
+  ]);
+  const ids = submittalEvidenceIds(result);
+  const kept = filterRequirementsBySubmittalEvidence(
+    [
+      { evidenceIds: ["body"], title: "Product data" },
+      { evidenceIds: ["prod"], title: "Steel doors" },
+      { evidenceIds: ["prod", "body"], title: "Mixed" },
+    ],
+    ids,
+  );
+  assert.deepEqual(
+    kept.map((r) => r.title),
+    ["Product data", "Mixed"],
   );
 });
 
@@ -326,9 +426,9 @@ test("validated extraction keeps non-catalog candidates inspectable but non-sele
 });
 
 test("product extraction cache and imported log versions are bumped",()=>{
- assert.equal(SUBMITTAL_EXTRACTION_VERSION,4);
- assert.equal(SUBMITTAL_LOG_VERSION,4);
- assert.equal(SUBMITTAL_CACHE_PREFIX,"cache/submittals-v4");
+ assert.equal(SUBMITTAL_EXTRACTION_VERSION,5);
+ assert.equal(SUBMITTAL_LOG_VERSION,5);
+ assert.equal(SUBMITTAL_CACHE_PREFIX,"cache/submittals-v5");
 });
 
 import { sourceIncludes, validateRequirement } from "../lib/domain/models.ts";
