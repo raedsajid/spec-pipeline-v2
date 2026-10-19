@@ -128,7 +128,9 @@ export default function EquipmentLogView({
         });
       }
       await refresh();
-      toast.success("Drawing uploaded. Process schedules next.");
+      toast.success(
+        "Drawing uploaded · crops prepared. Review crops, then Extract (AI).",
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -209,7 +211,7 @@ export default function EquipmentLogView({
       case "error":
         return d.drawing_error || "Error";
       default:
-        return "Upload received · prepare crops";
+        return "Waiting for crop prepare";
     }
   }
 
@@ -288,7 +290,7 @@ export default function EquipmentLogView({
           <p className="muted">
             {data?.counts.total
               ? `${data.counts.total} units · ${data.counts.auto} auto · ${data.counts.review} review · ${data.counts.no_match} no match`
-              : "Upload drawings → prepare crops → review → extract (AI) → generate log."}
+              : "Upload drawings (crops prepare automatically) → review → extract (AI) → generate log."}
           </p>
         </div>
         <div className="row wrap" style={{ gap: 8 }}>
@@ -356,19 +358,20 @@ export default function EquipmentLogView({
                   <span className="muted small">{drawingStatusLabel(d)}</span>
                   <button
                     className="button secondary small-button"
-                    disabled={busy}
-                    onClick={() => void prepareCrops(d)}
-                  >
-                    {canReview ? "Re-prepare crops" : "Prepare crops"}
-                  </button>
-                  <button
-                    className="button secondary small-button"
                     disabled={busy || !canReview}
                     onClick={() =>
                       setCropDoc({ id: d.id, filename: d.filename })
                     }
                   >
                     Review crops
+                  </button>
+                  <button
+                    className="button secondary small-button"
+                    disabled={busy}
+                    onClick={() => void prepareCrops(d)}
+                    title="Reset page regions (usually runs automatically on upload)"
+                  >
+                    Re-prepare crops
                   </button>
                   <button
                     className="button orange small-button"

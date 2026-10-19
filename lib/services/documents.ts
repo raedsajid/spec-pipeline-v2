@@ -120,31 +120,50 @@ export async function completeUpload(
     pid,
     hash,
   );
-  if (existing) return { docId: existing.id, reused: true };
-
-  let docId = id();
-  await run(
-    "INSERT OR IGNORE INTO project_docs (id,project_id,hash,filename,doc_kind,created) VALUES (?,?,?,?,?,?)",
-    docId,
-    pid,
-    hash,
-    filename.replace(/[\\/]/g, "_").slice(0, 180),
-    docKind,
-    now(),
-  );
-  docId = (
-    await one<{ id: string }>(
-      "SELECT id FROM project_docs WHERE project_id=? AND hash=?",
+  let docId: string;
+  let reused = false;
+  if (existing) {
+    docId = existing.id;
+    reused = true;
+  } else {
+    docId = id();
+    await run(
+      "INSERT OR IGNORE INTO project_docs (id,project_id,hash,filename,doc_kind,created) VALUES (?,?,?,?,?,?)",
+      docId,
       pid,
       hash,
-    )
-  )!.id;
+      filename.replace(/[\\/]/g, "_").slice(0, 180),
+      docKind,
+      now(),
+    );
+    docId = (
+      await one<{ id: string }>(
+        "SELECT id FROM project_docs WHERE project_id=? AND hash=?",
+        pid,
+        hash,
+      )
+    )!.id;
+  }
 
   await event(
     pid,
-    `Uploaded ${filename.slice(0, 100)}${cached ? " · existing document reused" : ""}`,
+    `Uploaded ${filename.slice(0, 100)}${cached || reused ? " · existing document reused" : ""}`,
   );
-  return { docId, reused: !!cached };
+
+  // Schedule drawings: prepare default page crops immediately (no AI).
+  // Dynamic import avoids a documents ↔ drawings ↔ equipment-log cycle.
+  let cropCount: number | undefined;
+  if (docKind === "drawing") {
+    const { prepareDrawingCrops } = await import("./drawings");
+    const prepared = await prepareDrawingCrops(docId, {
+      id: uid,
+      username: "",
+      role: "member",
+    });
+    cropCount = prepared.cropCount;
+  }
+
+  return { docId, reused: reused || !!cached, cropCount };
 }
 
 export async function importRequirements(docId: string, hash: string) {
