@@ -1595,22 +1595,108 @@ button[class*="button"],
   overflow: auto;
   background: #fff;
 }
-.crop-review-list {
+.crop-review-dialog {
+  width: min(1100px, 96vw) !important;
+  max-width: min(1100px, 96vw) !important;
+  max-height: 92vh;
+  overflow: auto;
+}
+.crop-review-workspace {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 50vh;
-  overflow: auto;
 }
-.crop-review-row {
-  display: grid;
-  grid-template-columns: 64px 1fr auto;
-  gap: 8px;
+.crop-review-toolbar {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 8px;
 }
-.crop-review-row input {
-  width: 100%;
-  font-size: 0.8rem;
+.crop-review-stage {
+  position: relative;
+  margin: 0 auto;
+  background: #1a2228;
+  border-radius: 8px;
+  overflow: auto;
+  max-height: min(70vh, 720px);
+  touch-action: none;
+}
+.crop-review-canvas {
+  display: block;
+  vertical-align: top;
+}
+.crop-review-overlay {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+.crop-review-stage-status {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.35);
+  font-size: 0.9rem;
+}
+.crop-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #e11d2e;
+  background: rgba(225, 29, 46, 0.12);
+  pointer-events: auto;
+  cursor: move;
+}
+.crop-box.selected {
+  border-width: 3px;
+  background: rgba(225, 29, 46, 0.2);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+.crop-box-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translateY(-100%);
+  background: #e11d2e;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.crop-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  border: 2px solid #e11d2e;
+  border-radius: 2px;
+  box-sizing: border-box;
+}
+.crop-handle-nw {
+  left: -6px;
+  top: -6px;
+  cursor: nwse-resize;
+}
+.crop-handle-ne {
+  right: -6px;
+  top: -6px;
+  cursor: nesw-resize;
+}
+.crop-handle-sw {
+  left: -6px;
+  bottom: -6px;
+  cursor: nesw-resize;
+}
+.crop-handle-se {
+  right: -6px;
+  bottom: -6px;
+  cursor: nwse-resize;
 }
 .search-field {
   position: relative;
