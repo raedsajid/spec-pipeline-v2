@@ -67,7 +67,7 @@ async function ensureSchema() {
       args: ["schema_version"],
     });
     const currentVersion = version.rows[0] as any;
-    if (String(currentVersion?.value ?? currentVersion?.[0] ?? "") === "2")
+    if (String(currentVersion?.value ?? currentVersion?.[0] ?? "") === "3")
       return;
 
     const statements = [
@@ -115,6 +115,7 @@ async function ensureSchema() {
         project_id text NOT NULL REFERENCES projects(id),
         hash text NOT NULL REFERENCES documents(hash),
         filename text NOT NULL,
+        doc_kind text DEFAULT 'spec' NOT NULL,
         log_version integer DEFAULT 0 NOT NULL,
         imported integer DEFAULT 0 NOT NULL,
         empty_review text,
@@ -162,6 +163,47 @@ async function ensureSchema() {
         lease integer DEFAULT 0 NOT NULL,
         error text
       )`,
+      `CREATE TABLE IF NOT EXISTS drawing_jobs (
+        hash text PRIMARY KEY NOT NULL,
+        status text DEFAULT 'pending' NOT NULL,
+        cursor integer DEFAULT 0 NOT NULL,
+        total integer DEFAULT 0 NOT NULL,
+        lease integer DEFAULT 0 NOT NULL,
+        error text
+      )`,
+      `CREATE TABLE IF NOT EXISTS equipment_logs (
+        id text PRIMARY KEY NOT NULL,
+        project_id text NOT NULL REFERENCES projects(id),
+        revision integer DEFAULT 0 NOT NULL,
+        created integer NOT NULL,
+        updated integer NOT NULL
+      )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS equipment_log_project ON equipment_logs(project_id)`,
+      `CREATE TABLE IF NOT EXISTS equipment_log_items (
+        id text PRIMARY KEY NOT NULL,
+        log_id text NOT NULL REFERENCES equipment_logs(id),
+        drawing_doc_id text,
+        unit_tag text NOT NULL,
+        sheet_number text DEFAULT '' NOT NULL,
+        schedule_title text DEFAULT '' NOT NULL,
+        table_id text DEFAULT '' NOT NULL,
+        row_index integer DEFAULT 0 NOT NULL,
+        band text DEFAULT 'no_match' NOT NULL,
+        match_method text,
+        proposed_csi text,
+        proposed_description text,
+        selected_csi text,
+        selected_description text,
+        status text DEFAULT 'needs_review' NOT NULL,
+        basis_of_design text,
+        raw_fields text DEFAULT '{}' NOT NULL,
+        candidates text DEFAULT '[]' NOT NULL,
+        equipment_types text DEFAULT '[]' NOT NULL,
+        revision integer DEFAULT 0 NOT NULL,
+        updated integer NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS equipment_items_log ON equipment_log_items(log_id)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS equipment_item_dedupe ON equipment_log_items(log_id,drawing_doc_id,unit_tag)`,
     ];
     for (const sql of statements) await client.execute(sql);
 
@@ -173,9 +215,15 @@ async function ensureSchema() {
       "log_version",
       "integer DEFAULT 0 NOT NULL",
     );
+    await addColumnIfMissing(
+      client,
+      "project_docs",
+      "doc_kind",
+      "text DEFAULT 'spec' NOT NULL",
+    );
     await client.execute({
       sql: "INSERT INTO _builderp_meta (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-      args: ["schema_version", "2"],
+      args: ["schema_version", "3"],
     });
   })().catch((error) => {
     schemaReady = null;

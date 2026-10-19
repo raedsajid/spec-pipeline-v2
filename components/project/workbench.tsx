@@ -43,6 +43,7 @@ import { api, pretty, specLabel } from "@/lib/api-client";
 import ProductPanel from "./product-panel";
 import SpecsView from "./specs-view";
 import DocumentChat from "./document-chat";
+import EquipmentLogView from "./equipment-log";
 type Work = { stage: string; file: string; progress: number };
 export default function Workbench({
   detail,
@@ -61,7 +62,9 @@ export default function Workbench({
   onSource: (s: any) => void;
   onEmpty: (d: any) => void;
 }) {
-  const docs: any[] = detail.documents,
+  const docs: any[] = (detail.documents || []).filter(
+      (d: any) => (d.doc_kind || "spec") !== "drawing",
+    ),
     rows: Requirement[] = detail.requirements,
     pid = detail.project.id;
   const [collapsedSpecs, setCollapsedSpecs] = useState<string[]>([]);
@@ -92,7 +95,12 @@ export default function Workbench({
   }, []);
   // One operation at a time prevents the same browser from racing shared PDF leases.
   useEffect(() => {
-    const next = docs.find((d) => !d.indexed && !failed.includes(d.id));
+    const next = docs.find(
+      (d) =>
+        (d.doc_kind || "spec") !== "drawing" &&
+        !d.indexed &&
+        !failed.includes(d.id),
+    );
     if (next && !running.current && !uploading) {
       void prepare(next);
     }
@@ -192,7 +200,11 @@ export default function Workbench({
     running.current = true;
     setError("");
     try {
-      const pending = docs.filter((d) => d.log_version !== SUBMITTAL_LOG_VERSION);
+      const pending = docs.filter(
+        (d) =>
+          (d.doc_kind || "spec") !== "drawing" &&
+          d.log_version !== SUBMITTAL_LOG_VERSION,
+      );
       for (let i = 0; i < pending.length && !dead.current; i++) {
         let done = false;
         setWork({
@@ -434,6 +446,9 @@ export default function Workbench({
             </p>
           )}
         </>
+      )}
+      {tab === "equipment" && (
+        <EquipmentLogView detail={detail} refresh={refresh} />
       )}
       {tab === "register" && (
         <>

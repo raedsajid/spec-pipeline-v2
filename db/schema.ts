@@ -64,6 +64,7 @@ export const projectDocs = sqliteTable(
       .notNull()
       .references(() => documents.hash),
     filename: text("filename").notNull(),
+    docKind: text("doc_kind").notNull().default("spec"),
     logVersion: integer("log_version").notNull().default(0),
     imported: integer("imported").notNull().default(0),
     emptyReview: text("empty_review"),
@@ -130,3 +131,59 @@ export const submittalJobs = sqliteTable("submittal_jobs", {
   lease: integer("lease").notNull().default(0),
   error: text("error"),
 });
+
+export const drawingJobs = sqliteTable("drawing_jobs", {
+  hash: text("hash").primaryKey(),
+  status: text("status").notNull().default("pending"),
+  cursor: integer("cursor").notNull().default(0),
+  total: integer("total").notNull().default(0),
+  lease: integer("lease").notNull().default(0),
+  error: text("error"),
+});
+
+export const equipmentLogs = sqliteTable(
+  "equipment_logs",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id),
+    revision: integer("revision").notNull().default(0),
+    created: integer("created").notNull(),
+    updated: integer("updated").notNull(),
+  },
+  (t) => [uniqueIndex("equipment_log_project").on(t.projectId)],
+);
+
+export const equipmentLogItems = sqliteTable(
+  "equipment_log_items",
+  {
+    id: text("id").primaryKey(),
+    logId: text("log_id")
+      .notNull()
+      .references(() => equipmentLogs.id),
+    drawingDocId: text("drawing_doc_id"),
+    unitTag: text("unit_tag").notNull(),
+    sheetNumber: text("sheet_number").notNull().default(""),
+    scheduleTitle: text("schedule_title").notNull().default(""),
+    tableId: text("table_id").notNull().default(""),
+    rowIndex: integer("row_index").notNull().default(0),
+    band: text("band").notNull().default("no_match"),
+    matchMethod: text("match_method"),
+    proposedCsi: text("proposed_csi"),
+    proposedDescription: text("proposed_description"),
+    selectedCsi: text("selected_csi"),
+    selectedDescription: text("selected_description"),
+    status: text("status").notNull().default("needs_review"),
+    basisOfDesign: text("basis_of_design"),
+    rawFields: text("raw_fields").notNull().default("{}"),
+    candidates: text("candidates").notNull().default("[]"),
+    equipmentTypes: text("equipment_types").notNull().default("[]"),
+    revision: integer("revision").notNull().default(0),
+    updated: integer("updated").notNull(),
+  },
+  (t) => [
+    index("equipment_items_log").on(t.logId),
+    uniqueIndex("equipment_item_dedupe").on(t.logId, t.drawingDocId, t.unitTag),
+  ],
+);

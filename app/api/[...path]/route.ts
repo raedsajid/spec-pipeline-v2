@@ -43,6 +43,16 @@ import {
   createProductSubmittals,
   setProductCatalogStatus,
 } from "@/lib/services/submittals";
+import {
+  generateEquipmentLog,
+  listEquipmentLog,
+  patchEquipmentLogItem,
+} from "@/lib/services/equipment-log";
+import {
+  getDrawingCrops,
+  processDrawingStep,
+  saveDrawingCrops,
+} from "@/lib/services/drawings";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -143,10 +153,30 @@ async function handle(request: Request) {
           objectKey: z.string().min(1).max(500),
           filename: z.string().min(1).max(240),
           size: z.number().int().min(8).max(10 * 1024 * 1024),
+          docKind: z.enum(["spec", "drawing"]).optional(),
         })
         .parse(await request.json());
       output = await completeUpload(u.id, key, body);
-    }
+    } else if (
+      resource === "projects" &&
+      key &&
+      action === "equipment-log" &&
+      method === "GET"
+    )
+      output = await listEquipmentLog(key, u.id);
+    else if (
+      resource === "projects" &&
+      key &&
+      action === "equipment-log" &&
+      method === "POST"
+    )
+      output = await generateEquipmentLog(key, u);
+    else if (
+      resource === "equipment-items" &&
+      key &&
+      method === "PATCH"
+    )
+      output = await patchEquipmentLogItem(key, u, await request.json());
     else if (
       resource === "projects" &&
       key &&
@@ -180,6 +210,14 @@ async function handle(request: Request) {
             "DELETE FROM requirements WHERE doc_id IN (SELECT id FROM project_docs WHERE project_id=?)",
           )
           .bind(key),
+        db()
+          .prepare(
+            "DELETE FROM equipment_log_items WHERE log_id IN (SELECT id FROM equipment_logs WHERE project_id=?)",
+          )
+          .bind(key),
+        db()
+          .prepare("DELETE FROM equipment_logs WHERE project_id=?")
+          .bind(key),
         db().prepare("DELETE FROM project_docs WHERE project_id=?").bind(key),
         db().prepare("DELETE FROM messages WHERE project_id=?").bind(key),
         db().prepare("DELETE FROM events WHERE project_id=?").bind(key),
@@ -202,6 +240,27 @@ async function handle(request: Request) {
       method === "POST"
     )
       output = await processStep(key, u, true);
+    else if (
+      resource === "documents" &&
+      key &&
+      action === "process-drawing" &&
+      method === "POST"
+    )
+      output = await processDrawingStep(key, u);
+    else if (
+      resource === "documents" &&
+      key &&
+      action === "crops" &&
+      method === "GET"
+    )
+      output = await getDrawingCrops(key, u.id);
+    else if (
+      resource === "documents" &&
+      key &&
+      action === "crops" &&
+      method === "POST"
+    )
+      output = await saveDrawingCrops(key, u.id, await request.json());
     else if (
       resource === "documents" &&
       key &&

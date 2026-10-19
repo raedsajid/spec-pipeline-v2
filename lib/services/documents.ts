@@ -65,10 +65,16 @@ export async function createUpload(
 export async function completeUpload(
   uid: string,
   pid: string,
-  input: { objectKey: string; filename: string; size: number },
+  input: {
+    objectKey: string;
+    filename: string;
+    size: number;
+    docKind?: "spec" | "drawing";
+  },
 ) {
   await ownedProject(pid, uid);
   const { objectKey, filename, size } = input;
+  const docKind = input.docKind === "drawing" ? "drawing" : "spec";
   if (
     !validPdfName(filename) ||
     size < 8 ||
@@ -118,11 +124,12 @@ export async function completeUpload(
 
   let docId = id();
   await run(
-    "INSERT OR IGNORE INTO project_docs (id,project_id,hash,filename,created) VALUES (?,?,?,?,?)",
+    "INSERT OR IGNORE INTO project_docs (id,project_id,hash,filename,doc_kind,created) VALUES (?,?,?,?,?,?)",
     docId,
     pid,
     hash,
     filename.replace(/[\\/]/g, "_").slice(0, 180),
+    docKind,
     now(),
   );
   docId = (
@@ -431,7 +438,14 @@ export async function indexStep(docId: string, u: User) {
 export async function projectDetail(pid: string, uid: string) {
   const project = await ownedProject(pid, uid);
   const documents = await all(
-    "SELECT pd.*,d.status,d.pages,d.cursor,d.total,d.indexed,d.error,j.status log_status,j.cursor log_cursor,j.total log_total,j.error log_error FROM project_docs pd JOIN documents d ON d.hash=pd.hash LEFT JOIN submittal_jobs j ON j.hash=pd.hash WHERE pd.project_id=? ORDER BY pd.created",
+    `SELECT pd.*,d.status,d.pages,d.cursor,d.total,d.indexed,d.error,
+      j.status log_status,j.cursor log_cursor,j.total log_total,j.error log_error,
+      dj.status drawing_status,dj.cursor drawing_cursor,dj.total drawing_total,dj.error drawing_error
+     FROM project_docs pd
+     JOIN documents d ON d.hash=pd.hash
+     LEFT JOIN submittal_jobs j ON j.hash=pd.hash
+     LEFT JOIN drawing_jobs dj ON dj.hash=pd.hash
+     WHERE pd.project_id=? ORDER BY pd.created`,
     pid,
   );
 
