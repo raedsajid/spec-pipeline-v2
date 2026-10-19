@@ -23,11 +23,13 @@ export default function CropReviewDialog({
   onOpenChange,
   docId,
   filename,
+  onSaved,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   docId: string;
   filename: string;
+  onSaved?: () => void | Promise<void>;
 }) {
   const [crops, setCrops] = useState<CropBox[]>([]);
   const [loading, setLoading] = useState(false);
@@ -59,7 +61,8 @@ export default function CropReviewDialog({
     setSaving(true);
     try {
       await api(`documents/${docId}/crops`, "POST", { crops });
-      toast.success("Crops saved. Re-process the drawing to re-extract.");
+      toast.success("Crops saved. Run Extract (AI) when you are ready.");
+      await onSaved?.();
       onOpenChange(false);
     } catch (e) {
       toast.error((e as Error).message);
@@ -74,17 +77,18 @@ export default function CropReviewDialog({
         <DialogHeader>
           <DialogTitle>Review schedule crops</DialogTitle>
           <DialogDescription>
-            Adjust detected regions on {filename}. Delete false positives or
-            edit normalized boxes (x, y, w, h). Full sheet overlay editor comes
-            with table detection.
+            Review regions on {filename} before any AI extract. Delete pages you
+            do not need, add regions, or edit normalized boxes (x, y, w, h).
+            Saving returns the drawing to “crops ready” so Extract (AI) uses your
+            edits.
           </DialogDescription>
         </DialogHeader>
         {loading ? (
           <p className="muted">Loading crops…</p>
         ) : !crops.length ? (
           <p className="muted">
-            No crops stored yet. Process the drawing first (full-page regions are
-            recorded per sheet).
+            No crops yet. Click Prepare crops first (no AI) — that creates one
+            full-page region per sheet for you to review.
           </p>
         ) : (
           <div className="crop-review-list">

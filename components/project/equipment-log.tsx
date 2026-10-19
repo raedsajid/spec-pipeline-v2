@@ -138,7 +138,40 @@ export default function EquipmentLogView({
     }
   }
 
-  async function processDrawing(doc: any) {
+  async function prepareCrops(doc: any) {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    setWork({
+      stage: "Preparing crop regions",
+      file: doc.filename,
+      progress: 30,
+    });
+    try {
+      const p = await api(
+        `documents/${doc.id}/prepare-drawing-crops`,
+        "POST",
+        {},
+      );
+      setWork({
+        stage: "Crops ready for review",
+        file: doc.filename,
+        progress: 100,
+      });
+      await refresh();
+      toast.success(
+        `Prepared ${p.cropCount} region(s). Review crops, then extract.`,
+      );
+      setCropDoc({ id: doc.id, filename: doc.filename });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+      setWork(null);
+    }
+  }
+
+  async function extractDrawing(doc: any) {
     if (busy) return;
     setBusy(true);
     setError("");
@@ -149,7 +182,7 @@ export default function EquipmentLogView({
           stage:
             p.status === "ready"
               ? "Schedules ready"
-              : "Extracting schedule tables",
+              : "Extracting schedule tables (AI)",
           file: doc.filename,
           progress: p.progress ?? 0,
         });
@@ -162,6 +195,21 @@ export default function EquipmentLogView({
     } finally {
       setBusy(false);
       setWork(null);
+    }
+  }
+
+  function drawingStatusLabel(d: any) {
+    switch (d.drawing_status) {
+      case "crops_ready":
+        return "Crops ready · review, then extract";
+      case "extracting":
+        return "Extracting…";
+      case "ready":
+        return "Schedules ready";
+      case "error":
+        return d.drawing_error || "Error";
+      default:
+        return "Upload received · prepare crops";
     }
   }
 
@@ -240,7 +288,7 @@ export default function EquipmentLogView({
           <p className="muted">
             {data?.counts.total
               ? `${data.counts.total} units · ${data.counts.auto} auto · ${data.counts.review} review · ${data.counts.no_match} no match`
-              : "Upload schedule drawings, extract rows, then generate the register."}
+              : "Upload drawings → prepare crops → review → extract (AI) → generate log."}
           </p>
         </div>
         <div className="row wrap" style={{ gap: 8 }}>
@@ -290,36 +338,48 @@ export default function EquipmentLogView({
           <p className="muted">No schedule drawings yet.</p>
         ) : (
           <ul className="equipment-drawing-list">
-            {drawings.map((d: any) => (
-              <li key={d.id}>
-                <span>{d.filename}</span>
-                <span className="muted small">
-                  {d.drawing_status === "ready"
-                    ? "Schedules ready"
-                    : d.drawing_status === "error"
-                      ? d.drawing_error || "Error"
-                      : d.drawing_status || "Not processed"}
-                </span>
-                <button
-                  className="button secondary small-button"
-                  disabled={busy}
-                  onClick={() => void processDrawing(d)}
-                >
-                  {d.drawing_status === "ready"
-                    ? "Re-process"
-                    : "Process schedules"}
-                </button>
-                <button
-                  className="button secondary small-button"
-                  disabled={busy}
-                  onClick={() =>
-                    setCropDoc({ id: d.id, filename: d.filename })
-                  }
-                >
-                  Review crops
-                </button>
-              </li>
-            ))}
+            {drawings.map((d: any) => {
+              const status = d.drawing_status || "pending";
+              const canReview =
+                status === "crops_ready" ||
+                status === "extracting" ||
+                status === "ready" ||
+                status === "error";
+              const canExtract =
+                status === "crops_ready" ||
+                status === "extracting" ||
+                status === "ready" ||
+                status === "error";
+              return (
+                <li key={d.id}>
+                  <span>{d.filename}</span>
+                  <span className="muted small">{drawingStatusLabel(d)}</span>
+                  <button
+                    className="button secondary small-button"
+                    disabled={busy}
+                    onClick={() => void prepareCrops(d)}
+                  >
+                    {canReview ? "Re-prepare crops" : "Prepare crops"}
+                  </button>
+                  <button
+                    className="button secondary small-button"
+                    disabled={busy || !canReview}
+                    onClick={() =>
+                      setCropDoc({ id: d.id, filename: d.filename })
+                    }
+                  >
+                    Review crops
+                  </button>
+                  <button
+                    className="button orange small-button"
+                    disabled={busy || !canExtract}
+                    onClick={() => void extractDrawing(d)}
+                  >
+                    {status === "ready" ? "Re-extract (AI)" : "Extract (AI)"}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
@@ -332,6 +392,9 @@ export default function EquipmentLogView({
           }}
           docId={cropDoc.id}
           filename={cropDoc.filename}
+          onSaved={async () => {
+            await refresh();
+          }}
         />
       )}
 

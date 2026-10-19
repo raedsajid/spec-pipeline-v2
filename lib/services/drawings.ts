@@ -1,6 +1,6 @@
 /**
- * Stepped drawing-schedule extraction (Phase 2a: full-page Gemini).
- * OpenCV crop path + optional crop review come next; row schema stays the same.
+ * Drawing schedule pipeline:
+ * 1) Prepare crops (no AI) → 2) Review crops → 3) Extract with Gemini.
  */
 import { PDFDocument } from "pdf-lib";
 import { z } from "zod";
@@ -37,7 +37,8 @@ Rules:
 - Prefer designation / unit / tag / mark columns when present.
 - Flatten nested headers with " | " between levels.
 - Skip non-schedule content (notes, legends, load summaries).
-- If the page has no equipment schedule table, return {"tables":[]}.`;
+- If a focus region is given, extract only tables inside that region.
+- If the page (or region) has no equipment schedule table, return {"tables":[]}.`;
 
 const ExtractSchema = z.object({
   tables: z
@@ -52,6 +53,13 @@ const ExtractSchema = z.object({
     .max(40)
     .default([]),
 });
+
+export type DrawingCrop = {
+  id: string;
+  page: number;
+  bbox: [number, number, number, number];
+  imageKey?: string;
+};
 
 type DrawingJob = {
   hash: string;
@@ -83,18 +91,31 @@ async function ensureJob(hash: string): Promise<DrawingJob> {
   ))!;
 }
 
+async function assertDrawing(docId: string, uid: string) {
+  const d = await ownedDoc(docId, uid);
+  if (String((d as any).doc_kind || "spec") !== "drawing") {
+    throw new AppError(
+      400,
+      "Only drawing documents can be processed for schedule extraction.",
+    );
+  }
+  return d;
+}
+
 function expandTables(
   drawingDocId: string,
   page: number,
+  cropId: string,
   tables: z.infer<typeof ExtractSchema>["tables"],
 ): ScheduleRowInput[] {
   const out: ScheduleRowInput[] = [];
   for (let ti = 0; ti < tables.length; ti++) {
     const table = tables[ti]!;
-    const tableId = table.table_id || `p${page}-t${ti + 1}`;
+    const tableId = table.table_id || `${cropId}-t${ti + 1}`;
     const meta: Record<string, unknown> = {
       ...(table.schedule_metadata || {}),
       page,
+      crop_id: cropId,
     };
     for (let ri = 0; ri < table.rows.length; ri++) {
       out.push({
@@ -119,69 +140,113 @@ function expandTables(
   return out;
 }
 
-export async function processDrawingStep(docId: string, user: User) {
-  const d = await ownedDoc(docId, user.id);
-  if (String((d as any).doc_kind || "spec") !== "drawing") {
+/** Step 1 — no AI: invent default page crops for review. */
+export async function prepareDrawingCrops(docId: string, user: User) {
+  const d = await assertDrawing(docId, user.id);
+  await ensureJob(d.hash);
+
+  const raw = await bucket().get("pdf/" + d.hash);
+  if (!raw) throw new AppError(404, "Original PDF is unavailable.");
+  const pdf = await PDFDocument.load(await raw.arrayBuffer());
+  const pages = pdf.getPageCount();
+  if (pages > 40) {
     throw new AppError(
-      400,
-      "Only drawing documents can be processed for schedule extraction.",
+      413,
+      "This version supports drawing PDFs up to 40 pages. Split larger sets.",
     );
   }
 
+  const crops: DrawingCrop[] = [];
+  for (let p = 1; p <= pages; p++) {
+    crops.push({
+      id: `page-${p}`,
+      page: p,
+      bbox: [0, 0, 1, 1],
+    });
+  }
+  await putDrawingCrops(d.hash, crops);
+  await putScheduleRows(d.hash, []);
+  await run(
+    "UPDATE drawing_jobs SET status=?, cursor=0, total=?, lease=0, error=NULL WHERE hash=?",
+    "crops_ready",
+    crops.length,
+    d.hash,
+  );
+  await event(
+    d.project_id,
+    `Prepared ${crops.length} crop region(s) for ${d.filename} · review before extract`,
+  );
+  return {
+    status: "crops_ready",
+    progress: 100,
+    cropCount: crops.length,
+    pages,
+  };
+}
+
+/** Step 3 — AI: extract schedules for each reviewed crop. */
+export async function extractDrawingStep(docId: string, user: User) {
+  const d = await assertDrawing(docId, user.id);
   const job = await ensureJob(d.hash);
+  const cropsFile = await getJSON<{ crops: DrawingCrop[] }>(
+    `cache/drawings-v1/${d.hash}/crops.json`,
+  );
+  const crops = cropsFile?.crops || [];
+  if (!crops.length) {
+    throw new AppError(
+      400,
+      "Prepare crops first, then review them before extracting schedules.",
+    );
+  }
+
   const leaseUntil = now() + 280_000;
-  if (job.lease > now() && job.status === "processing") {
+  if (job.lease > now() && job.status === "extracting") {
     return {
       status: job.status,
       progress: job.total
         ? Math.round((100 * job.cursor) / job.total)
         : 5,
-      message: "Another step is in progress.",
+      message: "Another extract step is in progress.",
     };
   }
 
-  await run(
-    "UPDATE drawing_jobs SET lease=?, status=?, error=NULL WHERE hash=?",
-    leaseUntil,
-    "processing",
-    d.hash,
-  );
+  let cursor = job.cursor;
+  let status = job.status;
+
+  // Fresh extract from crops_ready / ready / error → restart cursor.
+  if (
+    status === "crops_ready" ||
+    status === "ready" ||
+    status === "error" ||
+    status === "pending"
+  ) {
+    cursor = 0;
+    status = "extracting";
+    await putScheduleRows(d.hash, []);
+    await run(
+      "UPDATE drawing_jobs SET cursor=0, total=?, status=?, lease=?, error=NULL WHERE hash=?",
+      crops.length,
+      "extracting",
+      leaseUntil,
+      d.hash,
+    );
+  } else {
+    await run(
+      "UPDATE drawing_jobs SET lease=?, status=?, total=?, error=NULL WHERE hash=?",
+      leaseUntil,
+      "extracting",
+      crops.length,
+      d.hash,
+    );
+  }
 
   try {
     const raw = await bucket().get("pdf/" + d.hash);
     if (!raw) throw new AppError(404, "Original PDF is unavailable.");
     const pdf = await PDFDocument.load(await raw.arrayBuffer());
     const pages = pdf.getPageCount();
-    if (pages > 40) {
-      throw new AppError(
-        413,
-        "This version supports drawing PDFs up to 40 pages. Split larger sets.",
-      );
-    }
 
-    if (job.total !== pages) {
-      await run(
-        "UPDATE drawing_jobs SET total=?, cursor=? WHERE hash=?",
-        pages,
-        Math.min(job.cursor, pages),
-        d.hash,
-      );
-      job.total = pages;
-    }
-
-    let cursor = job.cursor;
-    // Re-process: if already ready, restart from page 0.
-    if (job.status === "ready" && cursor >= pages) {
-      cursor = 0;
-      await run(
-        "UPDATE drawing_jobs SET cursor=0, status=?, error=NULL WHERE hash=?",
-        "processing",
-        d.hash,
-      );
-      await putScheduleRows(d.hash, []);
-      await putDrawingCrops(d.hash, []);
-    }
-    if (cursor >= pages) {
+    if (cursor >= crops.length) {
       await run(
         "UPDATE drawing_jobs SET status=?, lease=0 WHERE hash=?",
         "ready",
@@ -190,75 +255,72 @@ export async function processDrawingStep(docId: string, user: User) {
       return { status: "ready", progress: 100 };
     }
 
-    const pageNum = cursor + 1;
+    const crop = crops[cursor]!;
+    if (crop.page < 1 || crop.page > pages) {
+      throw new AppError(
+        400,
+        `Crop ${crop.id} references page ${crop.page}, but the PDF has ${pages} pages.`,
+      );
+    }
+
     const subset = await PDFDocument.create();
-    const [copied] = await subset.copyPages(pdf, [cursor]);
+    const [copied] = await subset.copyPages(pdf, [crop.page - 1]);
     subset.addPage(copied);
     const pageBytes = await subset.save();
+    const [x, y, w, h] = crop.bbox;
+    const focus =
+      x <= 0.01 && y <= 0.01 && w >= 0.98 && h >= 0.98
+        ? "Use the full page."
+        : `Focus on the normalized region bbox [x=${x}, y=${y}, w=${w}, h=${h}] with origin at the top-left of the page.`;
 
     const extracted = await generate(
       EXTRACT_SYSTEM,
-      `Extract equipment schedule tables from drawing page ${pageNum} of ${pages}. Document: ${d.filename}`,
+      `Extract equipment schedule tables from ${d.filename}, page ${crop.page} (crop ${crop.id}). ${focus}`,
       user.id,
       pageBytes,
     );
     const parsed = ExtractSchema.parse(extracted);
-    const pageRows = expandTables(d.id, pageNum, parsed.tables);
+    const cropRows = expandTables(d.id, crop.page, crop.id, parsed.tables);
 
     const existing =
       (await getJSON<{ rows: ScheduleRowInput[] }>(scheduleRowsKey(d.hash)))
         ?.rows || [];
     const kept = existing.filter((r) => {
       const payload = r.row_payload || r;
-      const page = Number(
-        (payload.document as any)?.page ??
-          (payload.schedule_metadata as any)?.page ??
-          -1,
+      const cropId = String(
+        (payload.schedule_metadata as any)?.crop_id || "",
       );
-      return page !== pageNum;
+      return cropId !== crop.id;
     });
-    await putScheduleRows(d.hash, [...kept, ...pageRows]);
-
-    // Full-page region for optional crop review (table-CV crops replace these later).
-    const cropsFile = await getJSON<{
-      crops: { id: string; page: number; bbox: [number, number, number, number] }[];
-    }>(`cache/drawings-v1/${d.hash}/crops.json`);
-    const otherCrops = (cropsFile?.crops || []).filter((c) => c.page !== pageNum);
-    await putDrawingCrops(d.hash, [
-      ...otherCrops,
-      {
-        id: `page-${pageNum}`,
-        page: pageNum,
-        bbox: [0, 0, 1, 1],
-      },
-    ]);
+    await putScheduleRows(d.hash, [...kept, ...cropRows]);
 
     const next = cursor + 1;
-    const done = next >= pages;
+    const done = next >= crops.length;
     await run(
       "UPDATE drawing_jobs SET cursor=?, total=?, status=?, lease=0, error=NULL WHERE hash=?",
       next,
-      pages,
-      done ? "ready" : "processing",
+      crops.length,
+      done ? "ready" : "extracting",
       d.hash,
     );
     if (done) {
       await event(
         d.project_id,
-        `Drawing schedules ready · ${d.filename} · ${pages} pages`,
+        `Drawing schedules ready · ${d.filename} · ${crops.length} crop(s)`,
       );
     }
     return {
-      status: done ? "ready" : "processing",
-      progress: Math.round((100 * next) / pages),
-      page: pageNum,
-      rowsFound: pageRows.length,
+      status: done ? "ready" : "extracting",
+      progress: Math.round((100 * next) / crops.length),
+      cropId: crop.id,
+      page: crop.page,
+      rowsFound: cropRows.length,
     };
   } catch (error) {
     const message =
       error instanceof AppError
         ? error.message
-        : "Drawing processing failed. Progress is saved; retry.";
+        : "Drawing extract failed. Progress is saved; retry.";
     await run(
       "UPDATE drawing_jobs SET status=?, lease=0, error=? WHERE hash=?",
       "error",
@@ -269,14 +331,11 @@ export async function processDrawingStep(docId: string, user: User) {
   }
 }
 
-export type DrawingCrop = {
-  id: string;
-  page: number;
-  bbox: [number, number, number, number];
-  imageKey?: string;
-};
+/** @deprecated use extractDrawingStep — kept for older clients */
+export async function processDrawingStep(docId: string, user: User) {
+  return extractDrawingStep(docId, user);
+}
 
-/** Persist crop metadata for optional review UI (Phase 2). */
 export async function putDrawingCrops(hash: string, crops: DrawingCrop[]) {
   await putJSON(`cache/drawings-v1/${hash}/crops.json`, {
     crops,
@@ -285,11 +344,18 @@ export async function putDrawingCrops(hash: string, crops: DrawingCrop[]) {
 }
 
 export async function getDrawingCrops(docId: string, uid: string) {
-  const d = await ownedDoc(docId, uid);
+  const d = await assertDrawing(docId, uid);
   const file = await getJSON<{ crops: DrawingCrop[] }>(
     `cache/drawings-v1/${d.hash}/crops.json`,
   );
-  return { crops: file?.crops || [] };
+  const job = await one<DrawingJob>(
+    "SELECT * FROM drawing_jobs WHERE hash=?",
+    d.hash,
+  );
+  return {
+    crops: file?.crops || [],
+    status: job?.status || "pending",
+  };
 }
 
 export async function saveDrawingCrops(
@@ -297,7 +363,7 @@ export async function saveDrawingCrops(
   uid: string,
   body: unknown,
 ) {
-  const d = await ownedDoc(docId, uid);
+  const d = await assertDrawing(docId, uid);
   const parsed = z
     .object({
       crops: z
@@ -317,6 +383,17 @@ export async function saveDrawingCrops(
         .max(200),
     })
     .parse(body);
+  if (!parsed.crops.length) {
+    throw new AppError(400, "Keep at least one crop region before saving.");
+  }
   await putDrawingCrops(d.hash, parsed.crops);
-  return { ok: true, crops: parsed.crops };
+  // Edits invalidate prior extract — back to review gate (no AI).
+  await putScheduleRows(d.hash, []);
+  await run(
+    "UPDATE drawing_jobs SET status=?, cursor=0, total=?, lease=0, error=NULL WHERE hash=?",
+    "crops_ready",
+    parsed.crops.length,
+    d.hash,
+  );
+  return { ok: true, crops: parsed.crops, status: "crops_ready" };
 }

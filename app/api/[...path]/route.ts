@@ -49,8 +49,9 @@ import {
   patchEquipmentLogItem,
 } from "@/lib/services/equipment-log";
 import {
+  extractDrawingStep,
   getDrawingCrops,
-  processDrawingStep,
+  prepareDrawingCrops,
   saveDrawingCrops,
 } from "@/lib/services/drawings";
 export const dynamic = "force-dynamic";
@@ -243,10 +244,17 @@ async function handle(request: Request) {
     else if (
       resource === "documents" &&
       key &&
+      action === "prepare-drawing-crops" &&
+      method === "POST"
+    )
+      output = await prepareDrawingCrops(key, u);
+    else if (
+      resource === "documents" &&
+      key &&
       action === "process-drawing" &&
       method === "POST"
     )
-      output = await processDrawingStep(key, u);
+      output = await extractDrawingStep(key, u);
     else if (
       resource === "documents" &&
       key &&
