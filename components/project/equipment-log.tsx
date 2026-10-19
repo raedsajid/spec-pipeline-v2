@@ -4,6 +4,7 @@ import {
   Cog,
   LoaderCircle,
   Search,
+  Trash2,
   Upload,
 } from "lucide-react";
 import {
@@ -96,6 +97,57 @@ export default function EquipmentLogView({
     };
   }, [load]);
 
+  async function detectCropsForDoc(doc: { id: string; filename: string }) {
+    for (let n = 0; n < 80 && !dead.current; n++) {
+      const p = await api(
+        `documents/${doc.id}/prepare-drawing-crops`,
+        "POST",
+        {},
+      );
+      setWork({
+        stage:
+          p.status === "crops_ready"
+            ? "Schedule crops ready"
+            : "Detecting schedule tables",
+        file: doc.filename,
+        progress: p.progress ?? 0,
+      });
+      if (p.status === "crops_ready") return p;
+    }
+    throw new Error("Crop detection did not finish. Try uploading again.");
+  }
+
+  // Finish detection for drawings that are still pending/detecting (e.g. after refresh).
+  useEffect(() => {
+    const next = drawings.find((d: any) =>
+      ["pending", "detecting", null, undefined, ""].includes(d.drawing_status),
+    );
+    if (!next || busy || dead.current) return;
+    let cancelled = false;
+    (async () => {
+      setBusy(true);
+      setError("");
+      try {
+        await detectCropsForDoc(next);
+        if (!cancelled) {
+          await refresh();
+          toast.success(`Crops ready for ${next.filename}`);
+        }
+      } catch (e) {
+        if (!cancelled) setError((e as Error).message);
+      } finally {
+        if (!cancelled) {
+          setBusy(false);
+          setWork(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawings.map((d: any) => `${d.id}:${d.drawing_status}`).join("|"), busy]);
+
   async function uploadDrawings(files: FileList | null) {
     if (!files?.length || busy) return;
     setBusy(true);
@@ -120,16 +172,20 @@ export default function EquipmentLogView({
           throw new Error(
             "The PDF could not be uploaded. Check R2 CORS and try again.",
           );
-        await api(`projects/${pid}/upload-complete`, "POST", {
+        const done = await api(`projects/${pid}/upload-complete`, "POST", {
           objectKey: ticket.objectKey,
           filename: files[i]!.name,
           size: files[i]!.size,
           docKind: "drawing",
         });
+        await detectCropsForDoc({
+          id: done.docId,
+          filename: files[i]!.name,
+        });
       }
       await refresh();
       toast.success(
-        "Drawing uploaded · crops prepared. Review crops, then Extract (AI).",
+        "Drawing uploaded · schedule crops detected. Review, then Extract (AI).",
       );
     } catch (e) {
       setError((e as Error).message);
@@ -140,36 +196,19 @@ export default function EquipmentLogView({
     }
   }
 
-  async function prepareCrops(doc: any) {
+  async function removeDrawing(doc: any) {
     if (busy) return;
+    if (!confirm(`Remove ${doc.filename} from this project?`)) return;
     setBusy(true);
     setError("");
-    setWork({
-      stage: "Preparing crop regions",
-      file: doc.filename,
-      progress: 30,
-    });
     try {
-      const p = await api(
-        `documents/${doc.id}/prepare-drawing-crops`,
-        "POST",
-        {},
-      );
-      setWork({
-        stage: "Crops ready for review",
-        file: doc.filename,
-        progress: 100,
-      });
+      await api(`documents/${doc.id}`, "DELETE", {});
       await refresh();
-      toast.success(
-        `Prepared ${p.cropCount} region(s). Review crops, then extract.`,
-      );
-      setCropDoc({ id: doc.id, filename: doc.filename });
+      toast.success("Drawing removed.");
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
-      setWork(null);
     }
   }
 
@@ -202,6 +241,8 @@ export default function EquipmentLogView({
 
   function drawingStatusLabel(d: any) {
     switch (d.drawing_status) {
+      case "detecting":
+        return "Detecting schedule tables…";
       case "crops_ready":
         return "Crops ready · review, then extract";
       case "extracting":
@@ -211,7 +252,7 @@ export default function EquipmentLogView({
       case "error":
         return d.drawing_error || "Error";
       default:
-        return "Waiting for crop prepare";
+        return "Detecting crops…";
     }
   }
 
@@ -290,7 +331,7 @@ export default function EquipmentLogView({
           <p className="muted">
             {data?.counts.total
               ? `${data.counts.total} units · ${data.counts.auto} auto · ${data.counts.review} review · ${data.counts.no_match} no match`
-              : "Upload drawings (crops prepare automatically) → review → extract (AI) → generate log."}
+              : "Upload drawings (table crops auto-detect) → review → extract (AI) → generate log."}
           </p>
         </div>
         <div className="row wrap" style={{ gap: 8 }}>
@@ -345,13 +386,11 @@ export default function EquipmentLogView({
               const canReview =
                 status === "crops_ready" ||
                 status === "extracting" ||
-                status === "ready" ||
-                status === "error";
+                status === "ready";
               const canExtract =
                 status === "crops_ready" ||
                 status === "extracting" ||
-                status === "ready" ||
-                status === "error";
+                status === "ready";
               return (
                 <li key={d.id}>
                   <span>{d.filename}</span>
@@ -366,19 +405,20 @@ export default function EquipmentLogView({
                     Review crops
                   </button>
                   <button
-                    className="button secondary small-button"
-                    disabled={busy}
-                    onClick={() => void prepareCrops(d)}
-                    title="Reset page regions (usually runs automatically on upload)"
-                  >
-                    Re-prepare crops
-                  </button>
-                  <button
                     className="button orange small-button"
                     disabled={busy || !canExtract}
                     onClick={() => void extractDrawing(d)}
                   >
                     {status === "ready" ? "Re-extract (AI)" : "Extract (AI)"}
+                  </button>
+                  <button
+                    className="button secondary small-button"
+                    disabled={busy}
+                    onClick={() => void removeDrawing(d)}
+                    title="Remove drawing"
+                  >
+                    <Trash2 size={15} />
+                    Delete
                   </button>
                 </li>
               );

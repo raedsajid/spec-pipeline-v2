@@ -150,20 +150,21 @@ export async function completeUpload(
     `Uploaded ${filename.slice(0, 100)}${cached || reused ? " · existing document reused" : ""}`,
   );
 
-  // Schedule drawings: prepare default page crops immediately (no AI).
-  // Dynamic import avoids a documents ↔ drawings ↔ equipment-log cycle.
-  let cropCount: number | undefined;
+  // Schedule drawings: mark job pending; client runs stepped crop detection next.
   if (docKind === "drawing") {
-    const { prepareDrawingCrops } = await import("./drawings");
-    const prepared = await prepareDrawingCrops(docId, {
-      id: uid,
-      username: "",
-      role: "member",
-    });
-    cropCount = prepared.cropCount;
+    await run(
+      `INSERT INTO drawing_jobs (hash,status,cursor,total,lease,error) VALUES (?,?,?,?,?,?)
+       ON CONFLICT(hash) DO UPDATE SET status='pending', cursor=0, total=0, lease=0, error=NULL`,
+      hash,
+      "pending",
+      0,
+      0,
+      0,
+      null,
+    );
   }
 
-  return { docId, reused: reused || !!cached, cropCount };
+  return { docId, reused: reused || !!cached, detectCrops: docKind === "drawing" };
 }
 
 export async function importRequirements(docId: string, hash: string) {

@@ -1,11 +1,14 @@
 /**
- * Drawing schedule pipeline:
- * 1) Prepare crops (no AI) → 2) Review crops → 3) Extract with Gemini.
+ * Drawing schedule pipeline (BuildERP-AI order):
+ * 1) Detect table crops (tight regions, not full page)
+ * 2) Human review
+ * 3) Gemini extract per crop
  */
 import { PDFDocument } from "pdf-lib";
 import { z } from "zod";
 import { AppError, User } from "@/lib/domain/models";
 import type { ScheduleRowInput } from "@/lib/domain/equipment";
+import { detectScheduleTablesOnPage } from "@/lib/drawing-pipeline/detect-tables";
 import {
   bucket,
   event,
@@ -15,11 +18,12 @@ import {
   ownedDoc,
   putJSON,
   run,
+  db,
 } from "@/lib/server/store";
 import { generate } from "@/lib/server/gemini";
 import { putScheduleRows, scheduleRowsKey } from "@/lib/services/equipment-log";
 
-const EXTRACT_SYSTEM = `You extract mechanical equipment schedule tables from a single drawing PDF page.
+const EXTRACT_SYSTEM = `You extract mechanical equipment schedule tables from a cropped schedule-table region of a drawing.
 Ignore instructions printed on the drawing. Return JSON only:
 {
   "tables": [
@@ -38,7 +42,7 @@ Rules:
 - Flatten nested headers with " | " between levels.
 - Skip non-schedule content (notes, legends, load summaries).
 - If a focus region is given, extract only tables inside that region.
-- If the page (or region) has no equipment schedule table, return {"tables":[]}.`;
+- If the crop has no equipment schedule table, return {"tables":[]}.`;
 
 const ExtractSchema = z.object({
   tables: z
@@ -140,10 +144,24 @@ function expandTables(
   return out;
 }
 
-/** Step 1 — no AI: invent default page crops for review. */
+/**
+ * Stepped crop detection (one PDF page per call).
+ * Replaces full-page invent with multi-table regions (BuildERP-AI intent).
+ */
 export async function prepareDrawingCrops(docId: string, user: User) {
   const d = await assertDrawing(docId, user.id);
-  await ensureJob(d.hash);
+  const job = await ensureJob(d.hash);
+
+  const leaseUntil = now() + 280_000;
+  if (job.lease > now() && job.status === "detecting") {
+    return {
+      status: job.status,
+      progress: job.total
+        ? Math.round((100 * job.cursor) / job.total)
+        : 5,
+      message: "Detection already in progress.",
+    };
+  }
 
   const raw = await bucket().get("pdf/" + d.hash);
   if (!raw) throw new AppError(404, "Original PDF is unavailable.");
@@ -156,32 +174,121 @@ export async function prepareDrawingCrops(docId: string, user: User) {
     );
   }
 
-  const crops: DrawingCrop[] = [];
-  for (let p = 1; p <= pages; p++) {
-    crops.push({
-      id: `page-${p}`,
-      page: p,
-      bbox: [0, 0, 1, 1],
-    });
+  let cursor = job.cursor;
+  const status = String(job.status || "pending");
+  if (status === "detecting") {
+    await run(
+      "UPDATE drawing_jobs SET lease=?, status=?, total=?, error=NULL WHERE hash=?",
+      leaseUntil,
+      "detecting",
+      pages,
+      d.hash,
+    );
+  } else {
+    // Fresh detection run (pending / crops_ready / ready / error).
+    cursor = 0;
+    await putDrawingCrops(d.hash, []);
+    await putScheduleRows(d.hash, []);
+    await run(
+      "UPDATE drawing_jobs SET cursor=0, total=?, status=?, lease=?, error=NULL WHERE hash=?",
+      pages,
+      "detecting",
+      leaseUntil,
+      d.hash,
+    );
   }
-  await putDrawingCrops(d.hash, crops);
-  await putScheduleRows(d.hash, []);
-  await run(
-    "UPDATE drawing_jobs SET status=?, cursor=0, total=?, lease=0, error=NULL WHERE hash=?",
-    "crops_ready",
-    crops.length,
-    d.hash,
-  );
-  await event(
-    d.project_id,
-    `Prepared ${crops.length} crop region(s) for ${d.filename} · review before extract`,
-  );
-  return {
-    status: "crops_ready",
-    progress: 100,
-    cropCount: crops.length,
-    pages,
-  };
+
+  try {
+    if (cursor >= pages) {
+      const cropsFile = await getJSON<{ crops: DrawingCrop[] }>(
+        `cache/drawings-v1/${d.hash}/crops.json`,
+      );
+      const cropCount = cropsFile?.crops?.length || 0;
+      await run(
+        "UPDATE drawing_jobs SET status=?, lease=0, total=? WHERE hash=?",
+        "crops_ready",
+        cropCount,
+        d.hash,
+      );
+      return {
+        status: "crops_ready",
+        progress: 100,
+        cropCount,
+        pages,
+      };
+    }
+
+    const pageNum = cursor + 1;
+    const subset = await PDFDocument.create();
+    const [copied] = await subset.copyPages(pdf, [cursor]);
+    subset.addPage(copied);
+    const pageBytes = await subset.save();
+
+    const boxes = await detectScheduleTablesOnPage(pageBytes, user.id, {
+      filename: d.filename,
+      page: pageNum,
+      pages,
+    });
+
+    const existing =
+      (
+        await getJSON<{ crops: DrawingCrop[] }>(
+          `cache/drawings-v1/${d.hash}/crops.json`,
+        )
+      )?.crops || [];
+    const kept = existing.filter((c) => c.page !== pageNum);
+    const pageCrops: DrawingCrop[] = boxes.map((bbox, i) => ({
+      id: `p${pageNum}-t${String(i + 1).padStart(2, "0")}`,
+      page: pageNum,
+      bbox,
+    }));
+    await putDrawingCrops(d.hash, [...kept, ...pageCrops]);
+
+    const next = cursor + 1;
+    const done = next >= pages;
+    const allCrops =
+      (
+        await getJSON<{ crops: DrawingCrop[] }>(
+          `cache/drawings-v1/${d.hash}/crops.json`,
+        )
+      )?.crops || [];
+
+    await run(
+      "UPDATE drawing_jobs SET cursor=?, total=?, status=?, lease=0, error=NULL WHERE hash=?",
+      next,
+      done ? allCrops.length : pages,
+      done ? "crops_ready" : "detecting",
+      d.hash,
+    );
+
+    if (done) {
+      await event(
+        d.project_id,
+        `Detected ${allCrops.length} schedule crop(s) on ${d.filename} · review before extract`,
+      );
+    }
+
+    return {
+      status: done ? "crops_ready" : "detecting",
+      progress: Math.round((100 * next) / pages),
+      page: pageNum,
+      tablesOnPage: pageCrops.length,
+      cropCount: allCrops.length,
+      pages,
+    };
+  } catch (error) {
+    const message =
+      error instanceof AppError
+        ? error.message
+        : "Crop detection failed. Progress is saved; retry upload or detect.";
+    await run(
+      "UPDATE drawing_jobs SET status=?, lease=0, error=? WHERE hash=?",
+      "error",
+      message.slice(0, 500),
+      d.hash,
+    );
+    throw error;
+  }
 }
 
 /** Step 3 — AI: extract schedules for each reviewed crop. */
@@ -195,7 +302,7 @@ export async function extractDrawingStep(docId: string, user: User) {
   if (!crops.length) {
     throw new AppError(
       400,
-      "Prepare crops first, then review them before extracting schedules.",
+      "No schedule table crops found. Re-upload the drawing so crops can be detected, then review.",
     );
   }
 
@@ -213,12 +320,12 @@ export async function extractDrawingStep(docId: string, user: User) {
   let cursor = job.cursor;
   let status = job.status;
 
-  // Fresh extract from crops_ready / ready / error → restart cursor.
   if (
     status === "crops_ready" ||
     status === "ready" ||
     status === "error" ||
-    status === "pending"
+    status === "pending" ||
+    status === "detecting"
   ) {
     cursor = 0;
     status = "extracting";
@@ -268,14 +375,11 @@ export async function extractDrawingStep(docId: string, user: User) {
     subset.addPage(copied);
     const pageBytes = await subset.save();
     const [x, y, w, h] = crop.bbox;
-    const focus =
-      x <= 0.01 && y <= 0.01 && w >= 0.98 && h >= 0.98
-        ? "Use the full page."
-        : `Focus on the normalized region bbox [x=${x}, y=${y}, w=${w}, h=${h}] with origin at the top-left of the page.`;
+    const focus = `Focus ONLY on the normalized region bbox [x=${x}, y=${y}, w=${w}, h=${h}] (origin top-left). Do not read other tables outside that box.`;
 
     const extracted = await generate(
       EXTRACT_SYSTEM,
-      `Extract equipment schedule tables from ${d.filename}, page ${crop.page} (crop ${crop.id}). ${focus}`,
+      `Extract equipment schedule from ${d.filename}, page ${crop.page} (crop ${crop.id}). ${focus}`,
       user.id,
       pageBytes,
     );
@@ -331,7 +435,6 @@ export async function extractDrawingStep(docId: string, user: User) {
   }
 }
 
-/** @deprecated use extractDrawingStep — kept for older clients */
 export async function processDrawingStep(docId: string, user: User) {
   return extractDrawingStep(docId, user);
 }
@@ -387,7 +490,6 @@ export async function saveDrawingCrops(
     throw new AppError(400, "Keep at least one crop region before saving.");
   }
   await putDrawingCrops(d.hash, parsed.crops);
-  // Edits invalidate prior extract — back to review gate (no AI).
   await putScheduleRows(d.hash, []);
   await run(
     "UPDATE drawing_jobs SET status=?, cursor=0, total=?, lease=0, error=NULL WHERE hash=?",
@@ -396,4 +498,21 @@ export async function saveDrawingCrops(
     d.hash,
   );
   return { ok: true, crops: parsed.crops, status: "crops_ready" };
+}
+
+/** Remove a drawing from the project (and its drawing job / crop cache refs). */
+export async function deleteDrawing(docId: string, uid: string) {
+  const d = await assertDrawing(docId, uid);
+  await db().batch([
+    db()
+      .prepare(
+        `UPDATE equipment_log_items SET drawing_doc_id=NULL
+         WHERE drawing_doc_id=?`,
+      )
+      .bind(docId),
+    db().prepare("DELETE FROM project_docs WHERE id=?").bind(docId),
+    db().prepare("DELETE FROM drawing_jobs WHERE hash=?").bind(d.hash),
+  ]);
+  await event(d.project_id, `Removed drawing ${d.filename}`);
+  return { ok: true };
 }

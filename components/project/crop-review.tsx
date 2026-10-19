@@ -322,6 +322,7 @@ export default function CropReviewDialog({
                 </div>
               )}
               <canvas ref={canvasRef} className="crop-review-canvas" />
+              {stageSize.w > 0 && stageSize.h > 0 && (
               <div
                 className="crop-review-overlay"
                 style={{ width: stageSize.w, height: stageSize.h }}
@@ -355,6 +356,7 @@ export default function CropReviewDialog({
                   );
                 })}
               </div>
+              )}
             </div>
           </div>
         )}

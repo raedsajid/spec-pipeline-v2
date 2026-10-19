@@ -49,6 +49,7 @@ import {
   patchEquipmentLogItem,
 } from "@/lib/services/equipment-log";
 import {
+  deleteDrawing,
   extractDrawingStep,
   getDrawingCrops,
   prepareDrawingCrops,
@@ -255,6 +256,13 @@ async function handle(request: Request) {
       method === "POST"
     )
       output = await extractDrawingStep(key, u);
+    else if (
+      resource === "documents" &&
+      key &&
+      !action &&
+      method === "DELETE"
+    )
+      output = await deleteDrawing(key, u.id);
     else if (
       resource === "documents" &&
       key &&

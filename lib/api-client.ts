@@ -4,13 +4,17 @@ export async function api(path: string, method = "GET", body?: unknown) {
     headers:
       body instanceof FormData
         ? {}
-        : body
+        : body !== undefined
           ? { "Content-Type": "application/json" }
           : {},
     body:
-      body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
+      body instanceof FormData
+        ? body
+        : body !== undefined
+          ? JSON.stringify(body)
+          : undefined,
   });
-  const data: any = await response.json();
+  const data: any = await response.json().catch(() => ({}));
   if (!response.ok)
     throw new Error(data.error || "The request could not finish.");
   return data;
