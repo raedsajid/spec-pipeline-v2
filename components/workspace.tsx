@@ -5,7 +5,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   Plus,
-  Layers3,
+  LayoutGrid,
   FileText,
   CheckCheck,
   MessageSquareText,
@@ -15,7 +15,8 @@ import {
   Eye,
   LoaderCircle,
   FolderOpen,
-  ShieldCheck,
+  ChevronsUpDown,
+  ChevronUp,
   RefreshCw,
   KeyRound,
   Trash2,
@@ -111,7 +112,9 @@ export default function Workspace() {
     [source, setSource] = useState<any>(null),
     [deleteProject, setDeleteProject] = useState(false),
     [emptyDoc, setEmptyDoc] = useState<any>(null),
-    [emptyNote, setEmptyNote] = useState("");
+    [emptyNote, setEmptyNote] = useState(""),
+    [projectPickerOpen, setProjectPickerOpen] = useState(false),
+    [profileOpen, setProfileOpen] = useState(false);
   const currentId = useRef<string | null>(null);
   const refreshProjects = useCallback(async () => {
     const d = await api("projects");
@@ -329,113 +332,188 @@ export default function Workspace() {
   const unresolved = requirements.filter(
     (r) => !["approved", "rejected"].includes(r.status),
   ).length;
+  const documentCount = detail?.documents?.length ?? 0;
+  const projectTools: {
+    id: string;
+    label: string;
+    Icon: typeof FileText;
+    count?: number;
+  }[] = [
+    {
+      id: "documents",
+      label: "Specifications",
+      Icon: FileText,
+      count: documentCount || undefined,
+    },
+    {
+      id: "register",
+      label: "Submittal Log",
+      Icon: CheckCheck,
+      count: requirements.length || undefined,
+    },
+    { id: "specs", label: "Source Review", Icon: Eye },
+    { id: "chat", label: "Document Chat", Icon: MessageSquareText },
+    { id: "activity", label: "Activity", Icon: Clock },
+  ];
   return (
     <SidebarProvider>
       <Toaster richColors position="top-right" />
       <Sidebar className="app-sidebar">
         <SidebarHeader>
-          <a className="sidebar-brand" href="/">
-            <Brand />
-          </a>
+          <div className="sidebar-brand-row">
+            <a className="sidebar-brand" href="/">
+              <Brand />
+            </a>
+            <SidebarTrigger className="sidebar-collapse-trigger" />
+          </div>
+          <div className="current-project">
+            <div className="sidebar-caption current-project-label">
+              CURRENT PROJECT
+            </div>
+            <button
+              type="button"
+              className="current-project-button"
+              aria-expanded={projectPickerOpen}
+              onClick={() => {
+                setProjectPickerOpen((open) => !open);
+                setProfileOpen(false);
+                void refreshProjects();
+              }}
+            >
+              <FolderOpen size={18} />
+              <span>
+                {detail?.project.name || "Select a project"}
+              </span>
+              <ChevronsUpDown size={16} />
+            </button>
+            {projectPickerOpen && (
+              <div className="current-project-menu">
+                {projects.length === 0 ? (
+                  <div className="current-project-empty">No projects yet</div>
+                ) : (
+                  projects.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={
+                        "current-project-option" +
+                        (detail?.project.id === p.id ? " active" : "")
+                      }
+                      onClick={() => {
+                        setProjectPickerOpen(false);
+                        void openProject(p.id);
+                      }}
+                    >
+                      <FolderOpen size={16} />
+                      <span>{p.name}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
         </SidebarHeader>
         <SidebarContent>
-          <div className="sidebar-caption">WORKSPACE</div>
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
-                isActive={view === "projects"}
+                isActive={view === "projects" && !detail}
                 onClick={() => {
                   setView("projects");
                   setDetail(null);
                   currentId.current = null;
+                  setProjectPickerOpen(false);
                   refreshProjects();
                 }}
               >
-                <Layers3 />
+                <LayoutGrid />
                 <span>Projects</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                isActive={view === "settings"}
-                onClick={() => setView("settings")}
-              >
-                <Settings />
-                <span>Settings</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
           {detail && (
             <>
-              <div className="sidebar-caption recent-title">PROJECT VIEWS</div>
+              <div className="sidebar-caption project-tools-caption">
+                PROJECT TOOLS
+              </div>
               <SidebarMenu>
-                {[
-                  { id: "documents", label: "Specifications", Icon: FileText },
-                  { id: "register", label: "Submittal log", Icon: CheckCheck },
-                  { id: "specs", label: "Specs · source review", Icon: Eye },
-                  {
-                    id: "chat",
-                    label: "Document chat",
-                    Icon: MessageSquareText,
-                  },
-                  { id: "activity", label: "Activity", Icon: Clock },
-                ].map(({ id, label, Icon }) => (
+                {projectTools.map(({ id, label, Icon, count }) => (
                   <SidebarMenuItem key={id}>
                     <SidebarMenuButton
                       isActive={view === "projects" && tab === id}
                       onClick={() => {
                         setView("projects");
                         setTab(id);
+                        setProjectPickerOpen(false);
                       }}
                     >
                       <Icon />
                       <span>{label}</span>
+                      {count != null && (
+                        <span className="sidebar-menu-count">{count}</span>
+                      )}
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>
             </>
           )}
-          <div className="sidebar-caption recent-title">RECENT PROJECTS</div>
-          <SidebarMenu>
-            {projects.slice(0, 5).map((p) => (
-              <SidebarMenuItem key={p.id}>
-                <SidebarMenuButton
-                  onClick={() => openProject(p.id)}
-                  isActive={detail?.project.id === p.id && view === "projects"}
-                >
-                  <FolderOpen />
-                  <span>{p.name}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
-          <div className="sidebar-help">
-            <ShieldCheck size={20} />
-            <b>Your project stays yours.</b>
-            <p>Shared PDF processing. Private reviews and decisions.</p>
-          </div>
         </SidebarContent>
         <SidebarFooter>
-          <div className="profile">
-            <span className="avatar">{me.user.username[0].toUpperCase()}</span>
-            <div>
-              <b>{me.user.username}</b>
-              <small>
-                {me.user.role === "admin" ? "Workspace owner" : "Member"}
-              </small>
-            </div>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={view === "settings"}
+                onClick={() => {
+                  setView("settings");
+                  setProjectPickerOpen(false);
+                  setProfileOpen(false);
+                }}
+              >
+                <Settings />
+                <span>Settings</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+          <div className="profile-wrap">
             <button
-              aria-label="Sign out"
-              onClick={async () => {
-                await api("auth/logout", "POST", {});
-                setMe(null);
-                setDetail(null);
-                setPassword("");
+              type="button"
+              className="profile"
+              aria-expanded={profileOpen}
+              onClick={() => {
+                setProfileOpen((open) => !open);
+                setProjectPickerOpen(false);
               }}
             >
-              <LogOut size={18} />
+              <span className="avatar">{me.user.username[0].toUpperCase()}</span>
+              <div>
+                <b>{me.user.username}</b>
+                <small>
+                  {me.user.role === "admin" ? "Workspace owner" : "Member"}
+                </small>
+              </div>
+              <ChevronUp
+                size={16}
+                className={profileOpen ? "profile-chevron open" : "profile-chevron"}
+              />
             </button>
+            {profileOpen && (
+              <div className="profile-menu">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await api("auth/logout", "POST", {});
+                    setMe(null);
+                    setDetail(null);
+                    setPassword("");
+                    setProfileOpen(false);
+                  }}
+                >
+                  <LogOut size={16} />
+                  Sign out
+                </button>
+              </div>
+            )}
           </div>
         </SidebarFooter>
       </Sidebar>
@@ -709,7 +787,7 @@ export default function Workspace() {
               ) : (
                 <div className="empty-state">
                   <span className="empty-icon">
-                    <Layers3 size={32} />
+                    <LayoutGrid size={32} />
                   </span>
                   <h2>Start with your first project.</h2>
                   <p>
