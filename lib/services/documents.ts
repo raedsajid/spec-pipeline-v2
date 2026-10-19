@@ -53,7 +53,7 @@ export async function createUpload(
   await ownedProject(pid, uid);
   if (!validPdfName(filename) || size < 8 || size > MAX_PDF_SIZE)
     throw new AppError(400, "Choose a PDF between 8 bytes and 10 MB.");
-  await consumeLimit("upload:" + uid, 30, 86400000);
+  await consumeLimit("upload:" + uid, 500, 86400000);
   const objectKey = `incoming/${uid}/${id()}.pdf`;
   return {
     objectKey,
