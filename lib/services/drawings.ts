@@ -224,7 +224,7 @@ export async function prepareDrawingCrops(docId: string, user: User) {
     subset.addPage(copied);
     const pageBytes = await subset.save();
 
-    const boxes = await detectScheduleTablesOnPage(pageBytes, user.id, {
+    const detected = await detectScheduleTablesOnPage(pageBytes, user.id, {
       filename: d.filename,
       page: pageNum,
       pages,
@@ -237,10 +237,10 @@ export async function prepareDrawingCrops(docId: string, user: User) {
         )
       )?.crops || [];
     const kept = existing.filter((c) => c.page !== pageNum);
-    const pageCrops: DrawingCrop[] = boxes.map((bbox, i) => ({
-      id: `p${pageNum}-t${String(i + 1).padStart(2, "0")}`,
+    const pageCrops: DrawingCrop[] = detected.map((c, i) => ({
+      id: c.id || `p${pageNum}-t${String(i + 1).padStart(2, "0")}`,
       page: pageNum,
-      bbox,
+      bbox: c.bbox,
     }));
     await putDrawingCrops(d.hash, [...kept, ...pageCrops]);
 
